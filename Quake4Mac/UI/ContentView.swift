@@ -29,6 +29,8 @@ struct ContentView: View {
                 HomeScreenView(page: pad.homePage).ignoresSafeArea()
             } else if case .builtin("wallpaper")? = pad.currentDest {
                 WallpaperAppView().ignoresSafeArea()
+            } else if case .builtin("browser")? = pad.currentDest {
+                BrowserAppView().ignoresSafeArea()
             } else if case .builtin(let b)? = pad.currentDest {
                 HomeBuiltinView(title: b.capitalized).ignoresSafeArea()
             } else {
