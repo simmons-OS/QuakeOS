@@ -185,17 +185,19 @@ final class BrowserUI: ObservableObject {
     let sidebarFrac: CGFloat = 0.13
     let toolbarFrac: CGFloat = 0.16     // of the main (right) area's height = full panel height
     let rowH: CGFloat = 0.17            // sidebar row height (normalized)
+    @Published var sidebarOpen = true
     @Published var sidebarScroll: CGFloat = 0   // <= 0
     @Published var focusTick = 0
     private var start: CGPoint?, last: CGPoint?
 
     private var session: BrowserSession { .shared }
+    var sb: CGFloat { sidebarOpen ? sidebarFrac : 0 }   // effective sidebar width fraction
 
     func began(_ p: CGPoint) { start = p; last = p }
     func moved(_ p: CGPoint) {
         defer { last = p }
         guard let s = start, let l = last else { return }
-        if s.x < sidebarFrac {                                   // scroll the tab sidebar
+        if sidebarOpen, s.x < sidebarFrac {                      // scroll the tab sidebar
             let n = CGFloat(session.tabs.count + 1)
             let maxScroll = min(0, 1 - rowH * n)
             sidebarScroll = min(0, max(maxScroll, sidebarScroll + (p.y - l.y)))
@@ -208,7 +210,7 @@ final class BrowserUI: ObservableObject {
         defer { start = nil; last = nil }
         guard let s = start, let e = last else { return }
         guard max(abs(e.x - s.x), abs(e.y - s.y)) < 0.02 else { return }    // a drag, not a tap
-        if s.x < sidebarFrac {
+        if sidebarOpen, s.x < sidebarFrac {
             let idx = Int((s.y - sidebarScroll) / rowH)                      // 0 = new tab, then tabs
             if idx <= 0 { _ = session.newTab(); return }
             let ti = idx - 1
@@ -217,10 +219,11 @@ final class BrowserUI: ObservableObject {
             if s.x > sidebarFrac * 0.72 { session.close(tab.id) } else { session.select(tab.id) }
             return
         }
-        let lx = (s.x - sidebarFrac) / (1 - sidebarFrac)
+        let lx = (s.x - sb) / (1 - sb)
         if s.y < toolbarFrac {
-            if lx < 0.08 { session.back() }
-            else if lx < 0.16 { session.loadHome() }
+            if lx < 0.06 { sidebarOpen.toggle() }            // hamburger toggles the sidebar
+            else if lx < 0.12 { session.back() }
+            else if lx < 0.18 { session.loadHome() }
             else if lx > 0.92 { session.reload() }
             else { focusAddress() }
         } else if let web = session.active?.web {
@@ -244,9 +247,9 @@ struct BrowserAppView: View {
         GeometryReader { geo in
             let w = geo.size.width, h = geo.size.height
             HStack(spacing: 0) {
-                sidebar(w: w * ui.sidebarFrac, h: h)
+                if ui.sidebarOpen { sidebar(w: w * ui.sidebarFrac, h: h) }
                 VStack(spacing: 0) {
-                    toolbar(w: w * (1 - ui.sidebarFrac)).frame(height: h * ui.toolbarFrac)
+                    toolbar(w: w * (1 - ui.sb)).frame(height: h * ui.toolbarFrac)
                     BrowserHostView()
                 }
             }
@@ -292,6 +295,9 @@ struct BrowserAppView: View {
 
     private func toolbar(w: CGFloat) -> some View {
         HStack(spacing: w * 0.015) {
+            Button(action: { ui.sidebarOpen.toggle() }) {
+                Image(systemName: ui.sidebarOpen ? "sidebar.leading" : "line.3.horizontal")
+            }.buttonStyle(.plain)
             Button(action: session.back) { Image(systemName: "chevron.left") }.buttonStyle(.plain)
             Button(action: { session.loadHome() }) { Image(systemName: "house.fill") }.buttonStyle(.plain)
             TextField("Search or enter address", text: $session.address)
