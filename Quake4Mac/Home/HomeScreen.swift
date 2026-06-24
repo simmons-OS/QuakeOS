@@ -87,6 +87,11 @@ final class HomeStore: ObservableObject {
         guard pages.indices.contains(i) else { return }
         pages[i].append(HomeApp(title: app.title, symbol: app.symbol, tint: app.tint, dest: app.dest))
     }
+    func insertApp(_ app: HomeApp, page i: Int, at k: Int) {
+        guard pages.indices.contains(i) else { return }
+        let idx = min(max(0, k), pages[i].count)
+        pages[i].insert(HomeApp(title: app.title, symbol: app.symbol, tint: app.tint, dest: app.dest), at: idx)
+    }
     func removeApp(page i: Int, at j: Int) { guard pages.indices.contains(i), pages[i].indices.contains(j) else { return }; pages[i].remove(at: j) }
     func moveApp(page i: Int, from j: Int, to k: Int) {
         guard pages.indices.contains(i), pages[i].indices.contains(j), k >= 0, k < pages[i].count else { return }
@@ -279,86 +284,160 @@ struct AppSwitcherView: View {
 struct HomeLayoutView: View {
     @ObservedObject private var store = HomeStore.shared
     @ObservedObject private var wp = WallpaperStore.shared
+    @State private var editPage = 0
+
+    private let cols = 8, rows = 2
+    private let pvW: CGFloat = 820
+    private var pvH: CGFloat { pvW / 4 }     // 1920×480 → 4:1
+    private let lib = [GridItem(.adaptive(minimum: 86, maximum: 120), spacing: 12, alignment: .top)]
 
     private var wallpaperOptions: [(String, String)] {
         [("default", "Default (global)")] + WallpaperStore.options.map { ($0.id, $0.title) }
     }
+    private var page: Int { min(editPage, max(0, store.pages.count - 1)) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsHeader(title: "Layout",
-                           subtitle: "Arrange your Quake home screen — pages, app icons, and per-page wallpaper.")
-            ForEach(store.pages.indices, id: \.self) { p in pageCard(p) }
-            Button { store.addPage() } label: {
-                Label("Add home page", systemImage: "plus.rectangle.on.rectangle")
-                    .font(.system(size: 13, weight: .medium)).foregroundColor(NeonTheme.cyan)
-            }
-            .buttonStyle(.plain).padding(.top, 2)
-            Spacer()
-        }
-    }
-
-    @ViewBuilder private func pageCard(_ p: Int) -> some View {
-        NeonCard("Home Page \(p + 1)") {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Wallpaper").font(.system(size: 13)).foregroundColor(NeonTheme.textSecondary)
-                    Spacer(minLength: 12)
-                    Picker("", selection: wallpaperBinding(p)) {
-                        ForEach(wallpaperOptions, id: \.0) { Text($0.1).tag($0.0) }
-                    }.labelsHidden().pickerStyle(.menu).frame(width: 200)
-                }
-                NeonDivider()
-                if store.pages[p].isEmpty {
-                    Text("No apps on this page yet — add one below.")
-                        .font(.system(size: 12)).foregroundColor(NeonTheme.textTertiary)
-                }
-                ForEach(store.pages[p].indices, id: \.self) { j in appRow(p, j) }
-                HStack {
-                    Menu {
-                        ForEach(HomeStore.catalog()) { app in
-                            Button(app.title) { store.addApp(app, toPage: p) }
-                        }
-                    } label: {
-                        Label("Add app", systemImage: "plus.circle.fill")
-                            .font(.system(size: 13, weight: .medium)).foregroundColor(NeonTheme.cyan)
-                    }.menuStyle(.borderlessButton).fixedSize()
-                    Spacer()
-                    if store.pages.count > 1 {
-                        Button { store.removePage(p) } label: {
-                            Label("Remove page", systemImage: "trash").font(.system(size: 12)).foregroundColor(NeonTheme.magenta)
-                        }.buttonStyle(.plain)
+                           subtitle: "Drag an app from the library onto your home screen. Arrows switch pages; drag an icon to the trash to remove it.")
+            previewRow
+            controlsRow
+            NeonCard("Apps — drag onto the home screen above") {
+                LazyVGrid(columns: lib, spacing: 12) {
+                    ForEach(HomeStore.catalog()) { app in
+                        libTile(app).draggable("lib:\(app.dest.storageKey)")
                     }
                 }
-                .padding(.top, 4)
+                .padding(.vertical, 8)
             }
-            .padding(.vertical, 8)
+            trashZone
+            Spacer()
+        }
+        .onChange(of: store.pages.count) { _ in if editPage > store.pages.count - 1 { editPage = max(0, store.pages.count - 1) } }
+    }
+
+    // MARK: live preview (drop target) + page arrows
+
+    private var previewRow: some View {
+        HStack(spacing: 14) {
+            arrow("chevron.left", enabled: page > 0) { editPage = max(0, page - 1) }
+            previewCanvas
+            arrow("chevron.right", enabled: page < store.pages.count - 1) { editPage = min(store.pages.count - 1, page + 1) }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func arrow(_ icon: String, enabled: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.system(size: 22, weight: .semibold))
+                .foregroundColor(enabled ? NeonTheme.cyan : NeonTheme.textTertiary)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(NeonTheme.panel)).overlay(Circle().strokeBorder(NeonTheme.stroke, lineWidth: 1))
+        }.buttonStyle(.plain).disabled(!enabled)
+    }
+
+    private var previewCanvas: some View {
+        let cellW = pvW / CGFloat(cols), cellH = pvH / CGFloat(rows)
+        let size = min(cellW, cellH) * 0.52
+        return ZStack {
+            WallpaperView(id: wp.id(forPage: page))
+            Color.black.opacity(0.25)
+            VStack(spacing: 0) {
+                ForEach(0..<rows, id: \.self) { r in
+                    HStack(spacing: 0) {
+                        ForEach(0..<cols, id: \.self) { c in cell(r * cols + c, cellW: cellW, cellH: cellH, size: size) }
+                    }
+                }
+            }
+        }
+        .frame(width: pvW, height: pvH)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+    }
+
+    @ViewBuilder private func cell(_ k: Int, cellW: CGFloat, cellH: CGFloat, size: CGFloat) -> some View {
+        let apps = store.pages.indices.contains(page) ? store.pages[page] : []
+        let app = apps.indices.contains(k) ? apps[k] : nil
+        ZStack {
+            if let app { iconTile(app, size: size).draggable("idx:\(k)") }
+        }
+        .frame(width: cellW, height: cellH)
+        .contentShape(Rectangle())
+        .dropDestination(for: String.self) { items, _ in handleDrop(items, cell: k) }
+    }
+
+    private func handleDrop(_ items: [String], cell k: Int) -> Bool {
+        guard let s = items.first else { return false }
+        let count = store.pages.indices.contains(page) ? store.pages[page].count : 0
+        if s.hasPrefix("lib:") {
+            let key = String(s.dropFirst(4))
+            guard let a = HomeStore.catalog().first(where: { $0.dest.storageKey == key }) else { return false }
+            store.insertApp(a, page: page, at: min(k, count)); return true
+        } else if s.hasPrefix("idx:"), let j = Int(s.dropFirst(4)) {
+            store.moveApp(page: page, from: j, to: min(k, max(0, count - 1))); return true
+        }
+        return false
+    }
+
+    // MARK: controls + library + trash
+
+    private var controlsRow: some View {
+        HStack(spacing: 12) {
+            Text("Page \(page + 1) of \(store.pages.count)").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+            HStack(spacing: 6) {
+                ForEach(0..<store.pages.count, id: \.self) { i in
+                    Circle().fill(i == page ? NeonTheme.cyan : Color.white.opacity(0.3)).frame(width: 7, height: 7)
+                }
+            }
+            Spacer()
+            Picker("", selection: wallpaperBinding(page)) {
+                ForEach(wallpaperOptions, id: \.0) { Text($0.1).tag($0.0) }
+            }.labelsHidden().pickerStyle(.menu).frame(width: 190)
+            Button { store.addPage(); editPage = store.pages.count - 1 } label: {
+                Label("Add page", systemImage: "plus").font(.system(size: 12, weight: .medium)).foregroundColor(NeonTheme.cyan)
+            }.buttonStyle(.plain)
+            if store.pages.count > 1 {
+                Button { store.removePage(page); editPage = min(page, store.pages.count - 1) } label: {
+                    Label("Remove page", systemImage: "trash").font(.system(size: 12)).foregroundColor(NeonTheme.magenta)
+                }.buttonStyle(.plain)
+            }
         }
     }
 
-    @ViewBuilder private func appRow(_ p: Int, _ j: Int) -> some View {
-        let app = store.pages[p][j]
-        HStack(spacing: 10) {
-            Image(systemName: "line.3.horizontal").font(.system(size: 13)).foregroundColor(NeonTheme.textTertiary)
-            RoundedRectangle(cornerRadius: 7, style: .continuous).fill(app.tint.opacity(0.9))
-                .frame(width: 28, height: 28)
-                .overlay(Image(systemName: app.symbol).font(.system(size: 13, weight: .medium)).foregroundColor(.white))
-            Text(app.title).font(.system(size: 13)).foregroundColor(NeonTheme.textPrimary)
-            Spacer()
-            Button { store.removeApp(page: p, at: j) } label: { Image(systemName: "trash") }
-                .buttonStyle(.plain).foregroundColor(NeonTheme.magenta)
+    private var trashZone: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "trash"); Text("Drag an app here to remove it").font(.system(size: 12))
         }
-        .padding(.vertical, 5).padding(.horizontal, 6)
-        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.03)))
-        .contentShape(Rectangle())
-        .draggable("\(p):\(j)")
+        .foregroundColor(NeonTheme.textTertiary)
+        .frame(maxWidth: .infinity).frame(height: 46)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.white.opacity(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(NeonTheme.stroke, style: StrokeStyle(lineWidth: 1, dash: [5])))
         .dropDestination(for: String.self) { items, _ in
-            guard let s = items.first else { return false }
-            let parts = s.split(separator: ":").compactMap { Int($0) }
-            guard parts.count == 2, parts[0] == p else { return false }   // reorder within the page
-            store.moveApp(page: p, from: parts[1], to: j)
-            return true
+            guard let s = items.first, s.hasPrefix("idx:"), let j = Int(s.dropFirst(4)) else { return false }
+            store.removeApp(page: page, at: j); return true
         }
+    }
+
+    private func iconTile(_ app: HomeApp, size: CGFloat) -> some View {
+        VStack(spacing: size * 0.12) {
+            RoundedRectangle(cornerRadius: size * 0.24, style: .continuous).fill(app.tint.opacity(0.92))
+                .frame(width: size, height: size)
+                .overlay(Image(systemName: app.symbol).font(.system(size: size * 0.44, weight: .medium)).foregroundColor(.white))
+            Text(app.title).font(.system(size: size * 0.2, weight: .medium)).foregroundColor(.white.opacity(0.9)).lineLimit(1)
+        }
+    }
+
+    private func libTile(_ app: HomeApp) -> some View {
+        VStack(spacing: 6) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous).fill(app.tint.opacity(0.92))
+                .frame(width: 54, height: 54)
+                .overlay(Image(systemName: app.symbol).font(.system(size: 24, weight: .medium)).foregroundColor(.white))
+            Text(app.title).font(.system(size: 10, weight: .medium)).foregroundColor(NeonTheme.textSecondary).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity).frame(height: 92)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.03)))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func wallpaperBinding(_ p: Int) -> Binding<String> {
