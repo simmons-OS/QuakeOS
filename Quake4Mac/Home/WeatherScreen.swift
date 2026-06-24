@@ -41,9 +41,12 @@ struct WeatherScreenView: View {
     @ObservedObject private var store = WeatherStore.shared
     @ObservedObject private var loc = LocationService.shared
     var body: some View {
-        WeatherWebView(zoom: zoom, config: configJSON, interactive: interactive)
-            .ignoresSafeArea()
-            .onAppear { if interactive { loc.request() } }
+        Group {
+            if interactive { WeatherDeviceView(config: configJSON) }       // persistent webview on the panel
+            else { WeatherWebView(zoom: zoom, config: configJSON) }        // fresh webview for the settings preview
+        }
+        .ignoresSafeArea()
+        .onAppear { if interactive { loc.request() } }
     }
     private var configJSON: String {
         var dict: [String: Any] = [
@@ -55,10 +58,10 @@ struct WeatherScreenView: View {
     }
 }
 
+// Fresh, throwaway webview used only for the settings-strip preview (zoomed-down, non-interactive).
 struct WeatherWebView: NSViewRepresentable {
     var zoom: CGFloat = 1
     var config: String
-    var interactive = true
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -68,36 +71,113 @@ struct WeatherWebView: NSViewRepresentable {
         if let url = Bundle.main.url(forResource: "weather", withExtension: "html", subdirectory: "Web") {
             web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         }
-        if interactive {
-            let coord = context.coordinator
-            ScreenTouchRouter.shared.install(owner: coord,
-                began: { [weak coord] p in coord?.began(p) },
-                moved: { [weak coord] p in coord?.moved(p) },
-                ended: { [weak coord] in coord?.ended() })
-        }
         return web
     }
     func updateNSView(_ web: WKWebView, context: Context) { context.coordinator.apply(zoom: zoom, config: config) }
-    static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) { ScreenTouchRouter.shared.release(owner: coordinator) }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         weak var web: WKWebView?
         private var loaded = false
         private var pending: (CGFloat, String)?
-        private var startX: CGFloat?, lastX: CGFloat?
-
         func webView(_ w: WKWebView, didFinish n: WKNavigation!) { loaded = true; if let p = pending { apply(zoom: p.0, config: p.1) } }
         func apply(zoom: CGFloat, config: String) {
             guard loaded, let web = web else { pending = (zoom, config); return }
             web.evaluateJavaScript("window.WEATHER && window.WEATHER.set(\(config));", completionHandler: nil)
             if abs(zoom - 1) > 0.001 { web.evaluateJavaScript("document.documentElement.style.zoom='\(zoom)';", completionHandler: nil) }
         }
-        func began(_ p: CGPoint) { startX = p.x; lastX = p.x }
-        func moved(_ p: CGPoint) { lastX = p.x }
-        func ended() {
-            defer { startX = nil; lastX = nil }
-            guard let s = startX, let e = lastX, abs(e - s) > 0.12, let web = web else { return }
-            web.evaluateJavaScript("window.WEATHER && window.WEATHER.flip(\(e < s ? 1 : -1));", completionHandler: nil)
+    }
+}
+
+// Persistent webview that backs the on-device Weather app. Created once and reparented on each open,
+// so reopening the app never reloads the page (no "[City] Loading" splash) and config is pushed only
+// when it actually changes. Also routes touch: drags over the hourly strip scroll it; bigger horizontal
+// drags elsewhere flip to the next/previous city.
+final class WeatherWeb: NSObject, WKNavigationDelegate {
+    static let shared = WeatherWeb()
+    let web: WKWebView
+    private var loaded = false
+    private var pendingConfig: String?
+    private var lastConfig = ""
+    private var hourlyRect: (CGFloat, CGFloat, CGFloat, CGFloat)?   // normalized x,y,w,h
+    private var startX: CGFloat?, lastX: CGFloat?
+    private var scrollMode = false
+
+    override init() {
+        web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        super.init()
+        web.navigationDelegate = self
+        if let url = Bundle.main.url(forResource: "weather", withExtension: "html", subdirectory: "Web") {
+            web.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+        }
+    }
+
+    func webView(_ w: WKWebView, didFinish n: WKNavigation!) { loaded = true; pushIfChanged(force: true); scheduleRectRefresh() }
+
+    func apply(config: String) { pendingConfig = config; if loaded { pushIfChanged(force: false) } }
+
+    private func pushIfChanged(force: Bool) {
+        guard let cfg = pendingConfig else { return }
+        if !force && cfg == lastConfig { return }   // unchanged → don't re-render, avoids the splash on reopen
+        lastConfig = cfg
+        web.evaluateJavaScript("window.WEATHER && window.WEATHER.set(\(cfg));", completionHandler: nil)
+        scheduleRectRefresh()
+    }
+
+    func began(_ p: CGPoint) {
+        startX = p.x; lastX = p.x; scrollMode = false
+        if let r = hourlyRect, p.x >= r.0, p.x <= r.0 + r.2, p.y >= r.1, p.y <= r.1 + r.3 { scrollMode = true }
+    }
+    func moved(_ p: CGPoint) {
+        if scrollMode, let l = lastX {
+            let px = Double(p.x - l) * 1920.0
+            web.evaluateJavaScript("window.WEATHER && window.WEATHER.scrollHourly(\(px));", completionHandler: nil)
+        }
+        lastX = p.x
+    }
+    func ended() {
+        defer { startX = nil; lastX = nil }
+        if scrollMode { scrollMode = false; return }
+        guard let s = startX, let e = lastX, abs(e - s) > 0.12 else { return }
+        web.evaluateJavaScript("window.WEATHER && window.WEATHER.flip(\(e < s ? 1 : -1));", completionHandler: nil)
+        scheduleRectRefresh()
+    }
+
+    private func scheduleRectRefresh() { DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in self?.refreshRect() } }
+    private func refreshRect() {
+        web.evaluateJavaScript("JSON.stringify(window.__hourlyRect||null)") { [weak self] r, _ in
+            guard let s = r as? String, let d = s.data(using: .utf8),
+                  let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Double],
+                  let x = o["x"], let y = o["y"], let w = o["w"], let h = o["h"] else { self?.hourlyRect = nil; return }
+            self?.hourlyRect = (CGFloat(x), CGFloat(y), CGFloat(w), CGFloat(h))
+        }
+    }
+}
+
+struct WeatherDeviceView: NSViewRepresentable {
+    var config: String
+
+    func makeNSView(context: Context) -> NSView {
+        let v = NSView(); v.wantsLayer = true
+        attach(to: v)
+        ScreenTouchRouter.shared.install(owner: WeatherWeb.shared,
+            began: { p in WeatherWeb.shared.began(p) },
+            moved: { p in WeatherWeb.shared.moved(p) },
+            ended: { WeatherWeb.shared.ended() })
+        return v
+    }
+    func updateNSView(_ v: NSView, context: Context) {
+        attach(to: v)
+        WeatherWeb.shared.apply(config: config)
+    }
+    static func dismantleNSView(_ nsView: NSView, coordinator: ()) { ScreenTouchRouter.shared.release(owner: WeatherWeb.shared) }
+
+    private func attach(to v: NSView) {
+        let web = WeatherWeb.shared.web
+        if web.superview !== v {
+            web.removeFromSuperview()
+            web.frame = v.bounds
+            web.autoresizingMask = [.width, .height]
+            v.addSubview(web)
         }
     }
 }

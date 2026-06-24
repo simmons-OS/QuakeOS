@@ -18,6 +18,7 @@
     font-family:-apple-system,"SF Pro Display","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased;}
   #stage{height:100%;}
   .err{height:100%;display:flex;align-items:center;justify-content:center;font-size:32px;color:var(--muted);}
+  .leaflet-container{background:#0a0f17;}
 
   .dots{position:absolute;top:14px;right:20px;display:flex;gap:8px;z-index:5;}
   .dots i{width:9px;height:9px;border-radius:50%;background:var(--muted);opacity:.4;}
@@ -26,14 +27,14 @@
   .body{height:480px;display:flex;gap:14px;padding:16px 18px;}
   .col{display:flex;flex-direction:column;gap:14px;min-width:0;}
 
-  .now{flex:0 0 330px;display:flex;flex-direction:column;justify-content:center;gap:4px;
-    background:var(--card);border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:20px 24px;}
-  .now .city{font-size:30px;font-weight:700;}
-  .now .t{display:flex;align-items:center;gap:14px;}
-  .now .ico{font-size:88px;line-height:1;}
-  .now .temp{font-size:112px;font-weight:300;line-height:.9;}
-  .now .cond{font-size:28px;font-weight:600;color:var(--accent);}
-  .now .hl{font-size:24px;color:var(--muted);}
+  .now{flex:0 0 470px;display:flex;flex-direction:column;gap:10px;
+    background:var(--card);border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:16px 20px;}
+  .now .city{font-size:26px;font-weight:700;}
+  .now .t{display:flex;align-items:center;gap:12px;}
+  .now .ico{font-size:64px;line-height:1;}
+  .now .temp{font-size:84px;font-weight:300;line-height:.9;}
+  .now .cond{font-size:24px;font-weight:600;color:var(--accent);}
+  .now .hl{font-size:21px;color:var(--muted);}
 
   .mid{flex:1;}
   .panelCard{background:var(--card);border-radius:16px;border:1px solid rgba(255,255,255,.05);padding:10px 14px;}
@@ -65,14 +66,46 @@
   .compass{width:74px;height:74px;}
   .compass svg{width:74px;height:74px;}
   .tile .u{font-size:18px;color:var(--muted);font-weight:500;}
+  .nowtop{display:flex;flex-direction:column;gap:2px;}
+  .nowmap{flex:1;min-height:0;border-radius:12px;overflow:hidden;position:relative;border:1px solid rgba(255,255,255,.06);}
+  #precipmap{position:absolute;inset:0;}
+  .maplabel{position:absolute;top:6px;left:8px;z-index:600;font-size:13px;color:#cfd6e2;background:rgba(0,0,0,.45);padding:2px 8px;border-radius:6px;}
+  .hh{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;}
+  .hh::-webkit-scrollbar{display:none;}
+  .hh .c{flex:0 0 60px;}
 </style>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
   <div id="stage"><div class="err">Loading weather…</div></div>
 <script>
 (function(){
   var cfg = { locations:[], unit:'fahrenheit', useCurrent:true, current:null };
-  var list = [], idx = 0;
+  var list = [], idx = 0, rendered = false, rvFrames = null;
+
+  // RainViewer latest radar frame (free, no key)
+  async function rvLatest(){
+    if(rvFrames) return rvFrames;
+    try{ var j=await fetch('https://api.rainviewer.com/public/weather-maps.json').then(r=>r.json());
+      var fr=(j.radar&&j.radar.past)?j.radar.past.slice():[]; if(j.radar&&j.radar.nowcast) fr=fr.concat(j.radar.nowcast);
+      rvFrames={host:j.host, path: fr.length? fr[fr.length-1].path : null};
+    }catch(e){ rvFrames={host:null, path:null}; }
+    return rvFrames;
+  }
+  var _map=null;
+  async function initPrecip(loc){
+    var el=document.getElementById('precipmap'); if(!el || typeof L==='undefined') return;
+    if(_map){ try{ _map.remove(); }catch(e){} _map=null; }   // tear down the previous map before re-creating
+    try{
+      _map = L.map(el,{zoomControl:false,attributionControl:false,dragging:false,scrollWheelZoom:false,doubleClickZoom:false,boxZoom:false,keyboard:false,touchZoom:false,tap:false}).setView([loc.lat,loc.lon],7);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{subdomains:'abcd'}).addTo(_map);
+      var rv=await rvLatest();
+      if(rv && rv.path) L.tileLayer(rv.host+rv.path+'/256/{z}/{x}/{y}/4/1_1.png',{opacity:0.75}).addTo(_map);
+      L.circleMarker([loc.lat,loc.lon],{radius:5,color:'#fff',weight:2,fillColor:'#5aa9ff',fillOpacity:1}).addTo(_map);
+      setTimeout(function(){ try{ _map.invalidateSize(); }catch(e){} },120);
+    }catch(e){}
+  }
 
   function rnd(n){ return Math.round(n); }
   function wx(code, day){
@@ -135,7 +168,7 @@
 
   async function load(){
     var loc=list[idx]; if(!loc) return;
-    show('<div class="err">Loading '+loc.name+'…</div>');
+    if(!rendered) show('<div class="err">Loading '+loc.name+'…</div>');   // splash only on the very first load
     try{
       var u=cfg.unit==='fahrenheit'?'fahrenheit':'celsius';
       var wsu=u==='fahrenheit'?'mph':'kmh';
@@ -147,24 +180,27 @@
       var aq='https://air-quality-api.open-meteo.com/v1/air-quality?latitude='+loc.lat+'&longitude='+loc.lon+'&current=us_aqi&timezone=auto';
       var res=await Promise.all([ fetch(fc).then(r=>r.json()), fetch(aq).then(r=>r.json()).catch(function(){return null;}) ]);
       render(loc, res[0], res[1]);
-    }catch(e){ show('<div class="err">Weather unavailable</div>'); }
+      rendered=true;
+    }catch(e){ if(!rendered) show('<div class="err">Weather unavailable</div>'); }   // keep last good view on a failed refresh
   }
 
   function render(loc, w, aqd){
     var c=w.current, H=w.hourly, D=w.daily, deg=(cfg.unit==='fahrenheit'?'°F':'°C');
 
-    // current column (its own bordered card, with the city name)
-    var nowCol='<div class="col now"><div class="city">'+(loc.current?'📍 ':'')+loc.name+'</div>'
-      +'<div class="t"><span class="ico">'+ico(c.weather_code,c.is_day)+'</span>'
-      +'<span class="temp">'+rnd(c.temperature_2m)+'°</span></div>'
+    // current column: conditions on top, precipitation map on the bottom
+    var nowCol='<div class="col now">'
+      +'<div class="nowtop"><div class="city">'+(loc.current?'📍 ':'')+loc.name+'</div>'
+      +'<div class="t"><span class="ico">'+ico(c.weather_code,c.is_day)+'</span><span class="temp">'+rnd(c.temperature_2m)+'°</span></div>'
       +'<div class="cond">'+wx(c.weather_code)+'</div>'
-      +'<div class="hl">H:'+rnd(D.temperature_2m_max[0])+'°  L:'+rnd(D.temperature_2m_min[0])+'°  ·  Feels '+rnd(c.apparent_temperature)+'°</div></div>';
+      +'<div class="hl">H:'+rnd(D.temperature_2m_max[0])+'°  L:'+rnd(D.temperature_2m_min[0])+'°  ·  Feels '+rnd(c.apparent_temperature)+'°</div></div>'
+      +'<div class="nowmap"><div class="maplabel">Precipitation</div><div id="precipmap"></div></div>'
+      +'</div>';
 
     // hourly strip (next 12h) with sunrise/sunset markers
     var startKey=c.time.slice(0,13)+':00'; var s=H.time.indexOf(startKey); if(s<0)s=0;
     var srKey=D.sunrise[0].slice(0,13)+':00', ssKey=D.sunset[0].slice(0,13)+':00';
     var cells='';
-    for(var i=s;i<Math.min(s+12,H.time.length);i++){
+    for(var i=s;i<Math.min(s+30,H.time.length);i++){
       var key=H.time[i];
       cells+='<div class="c"><div class="hr">'+(i===s?'Now':fmtHour(key))+'</div>'
         +'<div class="hi">'+ico(H.weather_code[i],H.is_day[i])+'</div>'
@@ -173,7 +209,7 @@
       if(key===srKey) cells+='<div class="c mark"><div class="hr">'+fmtTime(D.sunrise[0])+'</div><div class="hi">🌅</div><div class="ht">Sunrise</div><div class="hp"></div></div>';
       if(key===ssKey) cells+='<div class="c mark"><div class="hr">'+fmtTime(D.sunset[0])+'</div><div class="hi">🌇</div><div class="ht">Sunset</div><div class="hp"></div></div>';
     }
-    var hourly='<div class="panelCard"><div class="hh-title">Hourly forecast</div><div class="hh">'+cells+'</div></div>';
+    var hourly='<div class="panelCard"><div class="hh-title">Hourly forecast</div><div class="hh" id="hh">'+cells+'</div></div>';
 
     // daily 7-day
     var allMax=Math.max.apply(null,D.temperature_2m_max), allMin=Math.min.apply(null,D.temperature_2m_min), span=Math.max(1,allMax-allMin);
@@ -220,11 +256,15 @@
       + '</div>';
 
     show(dots() + '<div class="body">' + nowCol + '<div class="col mid">'+hourly+daily+'</div>' + tiles + '</div>');
+    var hhEl=document.getElementById('hh');
+    if(hhEl){ var rr=hhEl.getBoundingClientRect(); window.__hourlyRect={x:rr.left/window.innerWidth,y:rr.top/window.innerHeight,w:rr.width/window.innerWidth,h:rr.height/window.innerHeight}; }
+    setTimeout(function(){ initPrecip(loc); }, 50);
   }
 
   window.WEATHER = {
     set: async function(o){ if(!o) return; if(o.locations) cfg.locations=o.locations; if('unit' in o) cfg.unit=o.unit; if('useCurrent' in o) cfg.useCurrent=!!o.useCurrent; if('current' in o) cfg.current=o.current; await buildList(); idx=0; load(); },
-    flip: function(d){ if(list.length<2) return; idx=(idx+(d>0?1:-1)+list.length)%list.length; load(); }
+    flip: function(d){ if(list.length<2) return; idx=(idx+(d>0?1:-1)+list.length)%list.length; load(); },
+    scrollHourly: function(px){ var el=document.getElementById('hh'); if(el) el.scrollLeft -= px; }
   };
   buildList().then(load);
   setInterval(load, 10*60*1000);
