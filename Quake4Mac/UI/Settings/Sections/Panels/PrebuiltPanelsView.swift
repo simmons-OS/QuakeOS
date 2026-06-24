@@ -90,10 +90,12 @@ struct MusicPanelView: View {
 // MARK: - System Monitor
 
 struct SystemMonitorPanelView: View {
+    private let columns = [GridItem(.adaptive(minimum: 320, maximum: 480), spacing: 16, alignment: .top)]
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             SettingsHeader(title: "System Monitor", subtitle: "Live system stats — fully automatic.")
 
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
             NeonCard("System Monitor") {
                 NeonInfoRow(label: "Setup", value: "Automatic")
                 NeonDivider()
@@ -108,7 +110,7 @@ struct SystemMonitorPanelView: View {
                 }
                 .padding(.vertical, 10)
             }
-            .frame(maxWidth: 480, alignment: .leading)
+            }
         }
     }
 }

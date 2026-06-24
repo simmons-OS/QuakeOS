@@ -197,12 +197,14 @@ struct ClockPageView: View {
     @State private var query = ""
     @State private var results: [GeoResult] = []
     @State private var searching = false
+    private let columns = [GridItem(.adaptive(minimum: 320, maximum: 480), spacing: 16, alignment: .top)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsHeader(title: pageName,
                            subtitle: "One big clock you swipe through, or a grid of world clocks. Changes apply live.")
 
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
             NeonCard("Layout") {
                 VStack(alignment: .leading, spacing: 12) {
                     Picker("Layout", selection: $store.layout) {
@@ -261,6 +263,7 @@ struct ClockPageView: View {
                     ForEach(store.clocks.indices, id: \.self) { i in clockRow(i) }
                 }
                 .padding(.vertical, 8)
+            }
             }
             Spacer()
         }

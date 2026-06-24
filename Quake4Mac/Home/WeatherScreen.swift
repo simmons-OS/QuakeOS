@@ -97,11 +97,13 @@ struct WeatherPanelView: View {
     @State private var query = ""
     @State private var results: [GeoResult] = []
     @State private var searching = false
+    private let columns = [GridItem(.adaptive(minimum: 320, maximum: 480), spacing: 16, alignment: .top)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsHeader(title: pageName,
                            subtitle: "Live weather on the Quake (Open-Meteo). Add any city by search and swipe between them on the panel.")
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
             NeonCard("Options") {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
@@ -141,6 +143,7 @@ struct WeatherPanelView: View {
                     }
                 }
                 .padding(.vertical, 8)
+            }
             }
             Spacer()
         }

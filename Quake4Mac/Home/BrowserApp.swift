@@ -334,11 +334,13 @@ struct BrowserHostView: NSViewRepresentable {
 struct BrowserPanelView: View {
     let pageName: String
     @ObservedObject private var bm = BrowserBookmarks.shared
+    private let columns = [GridItem(.adaptive(minimum: 320, maximum: 480), spacing: 16, alignment: .top)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             SettingsHeader(title: pageName,
                            subtitle: "The embedded web browser on the Quake. Edit the bookmark tiles shown on its home page.")
+            LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
             NeonCard("Home page bookmarks") {
                 VStack(alignment: .leading, spacing: 10) {
                     ForEach(bm.items.indices, id: \.self) { i in bookmarkRow(i) }
@@ -349,6 +351,7 @@ struct BrowserPanelView: View {
                     .buttonStyle(.plain).padding(.top, 4)
                 }
                 .padding(.vertical, 8)
+            }
             }
             Spacer()
         }
