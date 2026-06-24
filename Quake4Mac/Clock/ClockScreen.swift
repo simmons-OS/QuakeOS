@@ -67,6 +67,7 @@ final class ClockStore: ObservableObject {
     }
 
     func addClock() { clocks.append(WorldClock(label: "New York", tz: "America/New_York")) }
+    func add(name: String, tz: String) { clocks.append(WorldClock(label: name, tz: tz)) }
     func remove(at index: Int) { guard clocks.indices.contains(index) else { return }; clocks.remove(at: index) }
 
     /// Display name for a time-zone id (falls back to the id's last path component).
@@ -193,6 +194,9 @@ struct WebDashboardWeb: NSViewRepresentable {
 struct ClockPageView: View {
     let pageName: String
     @ObservedObject private var store = ClockStore.shared
+    @State private var query = ""
+    @State private var results: [GeoResult] = []
+    @State private var searching = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -236,17 +240,35 @@ struct ClockPageView: View {
 
             NeonCard("Clocks") {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(store.clocks.indices, id: \.self) { i in clockRow(i) }
-                    Button { store.addClock() } label: {
-                        Label("Add clock", systemImage: "plus.circle.fill")
-                            .font(.system(size: 13, weight: .medium)).foregroundColor(NeonTheme.cyan)
+                    HStack {
+                        TextField("Search any city or town…", text: $query)
+                            .textFieldStyle(.plain).font(.system(size: 13)).foregroundColor(NeonTheme.textPrimary)
+                            .padding(.horizontal, 10).padding(.vertical, 7)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.04)))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+                            .onSubmit { runSearch() }
+                        Button("Search") { runSearch() }.buttonStyle(.plain).foregroundColor(NeonTheme.cyan)
                     }
-                    .buttonStyle(.plain).padding(.top, 4).disabled(store.clocks.count >= 5)
+                    if searching { Text("Searching…").font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary) }
+                    ForEach(results) { r in
+                        Button {
+                            store.add(name: r.name, tz: r.timezone ?? "UTC"); results = []; query = ""
+                        } label: {
+                            HStack { Image(systemName: "plus.circle").foregroundColor(NeonTheme.cyan); Text(r.label).font(.system(size: 12)).foregroundColor(NeonTheme.textPrimary); Spacer() }
+                        }.buttonStyle(.plain).disabled(store.clocks.count >= 5)
+                    }
+                    NeonDivider()
+                    ForEach(store.clocks.indices, id: \.self) { i in clockRow(i) }
                 }
                 .padding(.vertical, 8)
             }
             Spacer()
         }
+    }
+
+    private func runSearch() {
+        let q = query; searching = true
+        Task { let r = await GeoSearch.search(q); await MainActor.run { results = r; searching = false } }
     }
 
     @ViewBuilder private func clockRow(_ i: Int) -> some View {
@@ -256,14 +278,8 @@ struct ClockPageView: View {
                 .padding(.horizontal, 10).padding(.vertical, 7).frame(width: 160)
                 .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.04)))
                 .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
-
-            Picker("", selection: Binding(
-                get: { store.clocks[i].tz },
-                set: { store.setTZ(at: i, to: $0) }
-            )) {
-                ForEach(ClockStore.cities, id: \.tz) { Text($0.name).tag($0.tz) }
-            }.labelsHidden().frame(width: 170)
-
+            Text(store.clocks[i].tz == "local" ? "Local" : store.clocks[i].tz)
+                .font(.system(size: 12)).foregroundColor(NeonTheme.textTertiary).lineLimit(1)
             Spacer()
             Button { store.remove(at: i) } label: {
                 Image(systemName: "trash").font(.system(size: 13)).foregroundColor(NeonTheme.magenta)
