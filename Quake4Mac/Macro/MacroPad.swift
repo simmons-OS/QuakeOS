@@ -35,6 +35,7 @@ enum AppDest: Equatable {
     case macroPage(String)     // one of the tile-grid pages, by name
     case panel(String)         // a built-in panel: "clock" | "music" | "monitor"
     case builtin(String)       // an on-device app: "settings" | "wallpaper" | "browser" (stubs for now)
+    case dashboard(UUID)       // saved authenticated web dashboard
 }
 
 struct Tile: Identifiable {
@@ -130,6 +131,10 @@ final class PadModel: ObservableObject {
     private var edgeDir = 0
 
     func setHomePage(_ p: Int) { let n = max(1, HomeStore.shared.pages.count); homePage = min(max(0, p), n - 1) }
+    private func rotateHomePage(_ delta: Int) {
+        let n = max(1, HomeStore.shared.pages.count)
+        homePage = (homePage + delta + n) % n
+    }
     func goHome() { onHome = true; editMode = false; draggingSlot = nil; dragPoint = nil; saveLastNav() }
 
     func openApp(_ dest: AppDest) {
@@ -138,7 +143,8 @@ final class PadModel: ObservableObject {
         case .panel(let id):
             let ex: Extra = id == "monitor" ? .monitor : id == "music" ? .music : id == "weather" ? .weather : .clock
             if let k = extras.firstIndex(of: ex) { pageIndex = pages.count + k }
-        case .builtin: break
+        case .builtin, .dashboard:
+            break
         }
         currentDest = dest
         onHome = false
@@ -300,6 +306,7 @@ final class PadModel: ObservableObject {
     /// source uses to look up the colour the user picked for this page.
     var currentScreenTitle: String {
         if onHome { return "Home" }
+        if case .dashboard(let id)? = currentDest { return DashboardStore.shared.dashboard(id: id)?.name ?? "Dashboard" }
         let t = screenTitles
         return t[min(max(0, pageIndex), t.count - 1)]
     }
@@ -316,8 +323,14 @@ final class PadModel: ObservableObject {
 
     func handle(_ e: QuakeEvent) {
         switch e {
-        case .knobClockwise:        openOrMoveSwitcher(+1)   // open / scrub the recents app switcher
-        case .knobCounterClockwise: openOrMoveSwitcher(-1)
+        case .knobClockwise:
+            if switcherOpen { openOrMoveSwitcher(+1) }
+            else if onHome { rotateHomePage(+1) }
+            else { openOrMoveSwitcher(+1) }   // open / scrub the recents app switcher
+        case .knobCounterClockwise:
+            if switcherOpen { openOrMoveSwitcher(-1) }
+            else if onHome { rotateHomePage(-1) }
+            else { openOrMoveSwitcher(-1) }
         case .knobPress:
             if editMode { exitEditMode() }                  // exit jiggle mode (like iPhone home)
             else if switcherOpen { commitSwitcher() }       // open the highlighted app

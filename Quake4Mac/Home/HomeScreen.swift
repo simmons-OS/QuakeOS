@@ -14,6 +14,7 @@ extension AppDest {
         case .macroPage(let n): return "macroPage:\(n)"
         case .panel(let p):     return "panel:\(p)"
         case .builtin(let b):   return "builtin:\(b)"
+        case .dashboard(let id): return "dashboard:\(id.uuidString)"
         }
     }
     init?(storageKey s: String) {
@@ -23,6 +24,9 @@ extension AppDest {
         case "macroPage": self = .macroPage(parts[1])
         case "panel":     self = .panel(parts[1])
         case "builtin":   self = .builtin(parts[1])
+        case "dashboard":
+            guard let id = UUID(uuidString: parts[1]) else { return nil }
+            self = .dashboard(id)
         default:          return nil
         }
     }
@@ -32,6 +36,7 @@ extension AppDest {
         case .macroPage(let n): return n
         case .panel(let p):     return p == "monitor" ? "System Monitor" : p.capitalized
         case .builtin(let b):   return b.capitalized
+        case .dashboard(let id): return DashboardStore.shared.dashboard(id: id)?.name ?? "Missing Dashboard"
         }
     }
 }
@@ -113,7 +118,29 @@ final class HomeStore: ObservableObject {
             HomeApp(title: "Weather",   symbol: "cloud.sun.fill", tint: .cyan,   dest: .panel("weather")),
         ]
         for p in PadStore.shared.pages { out.append(HomeApp(title: p.name, symbol: "square.grid.2x2.fill", tint: .teal, dest: .macroPage(p.name))) }
+        for dashboard in DashboardStore.shared.dashboards {
+            let symbol = dashboard.auth.kind == .homeAssistant ? "house.and.flag.fill" : "globe"
+            out.append(HomeApp(title: dashboard.name, symbol: symbol, tint: .cyan, dest: .dashboard(dashboard.id)))
+        }
         return out
+    }
+
+    func removeDashboardReferences(id: UUID) {
+        var next = pages
+        for page in next.indices {
+            next[page].removeAll { app in
+                if case .dashboard(let dashboardID) = app.dest { return dashboardID == id }
+                return false
+            }
+        }
+        pages = next
+
+        for key in ["startup.target", "nav.last"] {
+            if let value = UserDefaults.standard.string(forKey: key),
+               AppDest(storageKey: value) == .dashboard(id) {
+                UserDefaults.standard.set("home", forKey: key)
+            }
+        }
     }
 
     static func defaultPages() -> [[HomeApp]] {

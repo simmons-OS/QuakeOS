@@ -176,7 +176,7 @@ struct ClockWebView: NSViewRepresentable {
 
 struct WebDashboardView: View {
     let urlString: String
-    var body: some View { WebDashboardWeb(urlString: urlString).ignoresSafeArea() }
+    var body: some View { DirectWebDashboardView(urlString: urlString).ignoresSafeArea() }
 }
 
 struct WebDashboardWeb: NSViewRepresentable {

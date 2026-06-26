@@ -21,6 +21,14 @@
 		2DE23EF62FE8ED13006556C4 /* TileEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE23EF52FE8ED13006556C4 /* TileEditorView.swift */; };
 		2DE23EF82FE8ED13006556C4 /* TileGlyphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE23EF72FE8ED13006556C4 /* TileGlyphView.swift */; };
 		2DE23EFA2FE8ED13006556C4 /* TileCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2DE23EF92FE8ED13006556C4 /* TileCatalog.swift */; };
+		DA5A00000000000000000020 /* DashboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000010 /* DashboardStore.swift */; };
+		DA5A00000000000000000021 /* DashboardSecretStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000011 /* DashboardSecretStore.swift */; };
+		DA5A00000000000000000022 /* DashboardAuthPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000012 /* DashboardAuthPolicy.swift */; };
+		DA5A00000000000000000023 /* DashboardWebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000013 /* DashboardWebView.swift */; };
+		DA5A00000000000000000024 /* WebDashboardsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000016 /* WebDashboardsSettingsView.swift */; };
+		DA5A00000000000000000025 /* DashboardStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000035 /* DashboardStoreTests.swift */; };
+		DA5A00000000000000000026 /* DashboardAuthPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000036 /* DashboardAuthPolicyTests.swift */; };
+		DA5A00000000000000000027 /* HomeDashboardDestinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000037 /* HomeDashboardDestinationTests.swift */; };
 		AA0000000000000000000013 /* Quake4MacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000010 /* Quake4MacApp.swift */; };
 		AA0000000000000000000091 /* PanelWeb.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000090 /* PanelWeb.swift */; };
 		AA0000000000000000000014 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* ContentView.swift */; };
@@ -64,6 +72,15 @@
 		2DE23EF52FE8ED13006556C4 /* TileEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileEditorView.swift; sourceTree = "<group>"; };
 		2DE23EF72FE8ED13006556C4 /* TileGlyphView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileGlyphView.swift; sourceTree = "<group>"; };
 		2DE23EF92FE8ED13006556C4 /* TileCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TileCatalog.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000010 /* DashboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardStore.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000011 /* DashboardSecretStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardSecretStore.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000012 /* DashboardAuthPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardAuthPolicy.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000013 /* DashboardWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardWebView.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000016 /* WebDashboardsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDashboardsSettingsView.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000034 /* Quake4MacTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Quake4MacTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		DA5A00000000000000000035 /* DashboardStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardStoreTests.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000036 /* DashboardAuthPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardAuthPolicyTests.swift; sourceTree = "<group>"; };
+		DA5A00000000000000000037 /* HomeDashboardDestinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeDashboardDestinationTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* Quake4Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Quake4Mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000010 /* Quake4MacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Quake4MacApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000090 /* PanelWeb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelWeb.swift; sourceTree = "<group>"; };
@@ -93,8 +110,25 @@
 		AA0000000000000000000050 /* Thermals.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Thermals.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXContainerItemProxy section */
+		DA5A0000000000000000003B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = AA0000000000000000000004 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AA0000000000000000000005;
+			remoteInfo = Quake4Mac;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFrameworksBuildPhase section */
 		AA0000000000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA5A00000000000000000031 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -123,6 +157,7 @@
 		2DE23ED32FE8E948006556C4 /* Sections */ = {
 			isa = PBXGroup;
 			children = (
+				DA5A00000000000000000015 /* Advanced */,
 				2DE23EE52FE8ED13006556C4 /* Lighting */,
 				2DE23EF42FE8ED13006556C4 /* Panels */,
 				2DE23ED12FE8E948006556C4 /* General */,
@@ -181,10 +216,30 @@
 			path = Panels;
 			sourceTree = "<group>";
 		};
+		DA5A00000000000000000014 /* Dashboards */ = {
+			isa = PBXGroup;
+			children = (
+				DA5A00000000000000000010 /* DashboardStore.swift */,
+				DA5A00000000000000000011 /* DashboardSecretStore.swift */,
+				DA5A00000000000000000012 /* DashboardAuthPolicy.swift */,
+				DA5A00000000000000000013 /* DashboardWebView.swift */,
+			);
+			path = Dashboards;
+			sourceTree = "<group>";
+		};
+		DA5A00000000000000000015 /* Advanced */ = {
+			isa = PBXGroup;
+			children = (
+				DA5A00000000000000000016 /* WebDashboardsSettingsView.swift */,
+			);
+			path = Advanced;
+			sourceTree = "<group>";
+		};
 		AA0000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000003 /* Quake4Mac */,
+				DA5A00000000000000000038 /* Quake4MacTests */,
 				AA0000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -193,8 +248,19 @@
 			isa = PBXGroup;
 			children = (
 				AA0000000000000000000006 /* Quake4Mac.app */,
+				DA5A00000000000000000034 /* Quake4MacTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		DA5A00000000000000000038 /* Quake4MacTests */ = {
+			isa = PBXGroup;
+			children = (
+				DA5A00000000000000000035 /* DashboardStoreTests.swift */,
+				DA5A00000000000000000036 /* DashboardAuthPolicyTests.swift */,
+				DA5A00000000000000000037 /* HomeDashboardDestinationTests.swift */,
+			);
+			path = Quake4MacTests;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000003 /* Quake4Mac */ = {
@@ -208,6 +274,7 @@
 				AA0000000000000000000048 /* SystemMonitor */,
 				AA0000000000000000000062 /* Clock */,
 				AA0000000000000000000065 /* Home */,
+				DA5A00000000000000000014 /* Dashboards */,
 				AA0000000000000000000020 /* Icons */,
 				AA0000000000000000000022 /* Web */,
 				AA0000000000000000000066 /* Wallpapers */,
@@ -339,6 +406,24 @@
 			productReference = AA0000000000000000000006 /* Quake4Mac.app */;
 			productType = "com.apple.product-type.application";
 		};
+		DA5A00000000000000000030 /* Quake4MacTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = DA5A0000000000000000003A /* Build configuration list for PBXNativeTarget "Quake4MacTests" */;
+			buildPhases = (
+				DA5A00000000000000000032 /* Sources */,
+				DA5A00000000000000000031 /* Frameworks */,
+				DA5A00000000000000000033 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				DA5A0000000000000000003C /* PBXTargetDependency */,
+			);
+			name = Quake4MacTests;
+			productName = Quake4MacTests;
+			productReference = DA5A00000000000000000034 /* Quake4MacTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -351,6 +436,10 @@
 				TargetAttributes = {
 					AA0000000000000000000005 = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					DA5A00000000000000000030 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = AA0000000000000000000005;
 					};
 				};
 			};
@@ -368,6 +457,7 @@
 			projectRoot = "";
 			targets = (
 				AA0000000000000000000005 /* Quake4Mac */,
+				DA5A00000000000000000030 /* Quake4MacTests */,
 			);
 		};
 /* End PBXProject section */
@@ -380,6 +470,13 @@
 				AA0000000000000000000021 /* Icons in Resources */,
 				AA0000000000000000000023 /* Web in Resources */,
 				AA0000000000000000000067 /* Wallpapers in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA5A00000000000000000033 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -427,10 +524,33 @@
 				2DE23EF62FE8ED13006556C4 /* TileEditorView.swift in Sources */,
 				2DE23EF82FE8ED13006556C4 /* TileGlyphView.swift in Sources */,
 				2DE23EFA2FE8ED13006556C4 /* TileCatalog.swift in Sources */,
+				DA5A00000000000000000020 /* DashboardStore.swift in Sources */,
+				DA5A00000000000000000021 /* DashboardSecretStore.swift in Sources */,
+				DA5A00000000000000000022 /* DashboardAuthPolicy.swift in Sources */,
+				DA5A00000000000000000023 /* DashboardWebView.swift in Sources */,
+				DA5A00000000000000000024 /* WebDashboardsSettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DA5A00000000000000000032 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DA5A00000000000000000025 /* DashboardStoreTests.swift in Sources */,
+				DA5A00000000000000000026 /* DashboardAuthPolicyTests.swift in Sources */,
+				DA5A00000000000000000027 /* HomeDashboardDestinationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		DA5A0000000000000000003C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AA0000000000000000000005 /* Quake4Mac */;
+			targetProxy = DA5A0000000000000000003B /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		AA000000000000000000000C /* Debug */ = {
@@ -529,6 +649,46 @@
 			};
 			name = Release;
 		};
+		DA5A0000000000000000003D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.quake4mac.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Quake4Mac.app/Contents/MacOS/Quake4Mac";
+			};
+			name = Debug;
+		};
+		DA5A0000000000000000003E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.quake4mac.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Quake4Mac.app/Contents/MacOS/Quake4Mac";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -546,6 +706,15 @@
 			buildConfigurations = (
 				AA000000000000000000000E /* Debug */,
 				AA000000000000000000000F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		DA5A0000000000000000003A /* Build configuration list for PBXNativeTarget "Quake4MacTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA5A0000000000000000003D /* Debug */,
+				DA5A0000000000000000003E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

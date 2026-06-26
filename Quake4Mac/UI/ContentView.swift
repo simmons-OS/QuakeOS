@@ -64,6 +64,8 @@ struct ContentView: View {
             BrowserAppView().ignoresSafeArea()
         } else if case .builtin("settings")? = pad.currentDest {
             SettingsAppView(input: state.input).ignoresSafeArea()
+        } else if case .dashboard(let id)? = pad.currentDest {
+            DashboardScreenView(dashboardID: id).ignoresSafeArea()
         } else if case .builtin(let b)? = pad.currentDest {
             HomeBuiltinView(title: b.capitalized).ignoresSafeArea()
         } else {
@@ -80,7 +82,7 @@ struct ContentView: View {
                 switch pad.currentKind {
                 case .grid:                            ScreenWebView(pad: pad).ignoresSafeArea()
                 case .app(let id) where id == "clock": ClockDeviceView().ignoresSafeArea()
-                case .web(let url):                    WebDashboardView(urlString: url).ignoresSafeArea()
+                case .web(let url):                    DirectWebDashboardView(urlString: url).ignoresSafeArea()
                 case .app:                             ScreenWebView(pad: pad).ignoresSafeArea()
                 }
             }
