@@ -21,6 +21,7 @@ struct TileSpec: Codable, Identifiable, Hashable {
     var actKind: String = "none"
     var actStr: String?
     var actInt: Int?
+    var actSteps: [MacroStep]?
     var fromSlot: Int? = nil   // set when dragging an existing strip tile (move/swap within a page)
     var editable: Bool = false // custom tiles (user-created) are editable; catalog presets are not
 
@@ -44,10 +45,14 @@ struct TileSpec: Codable, Identifiable, Hashable {
         switch a {
         case .launchApp(let b):   actKind = "app";     actStr = b
         case .openURL(let u):     actKind = "url";     actStr = u
+        case .openPath(let p):    actKind = "open";    actStr = p
         case .shell(let c):       actKind = "shell";   actStr = c
         case .appleScript(let x): actKind = "ascript"; actStr = x
         case .luminance(let d):   actKind = "lum";     actInt = d
         case .openPage(let n):    actKind = "page";    actStr = n
+        case .keyCombo(let k):    actKind = "key";     actStr = k
+        case .typeText(let t):    actKind = "text";    actStr = t
+        case .macro(let steps):   actKind = "macro";   actSteps = steps
         case .none:               actKind = "none"
         }
     }
@@ -56,10 +61,14 @@ struct TileSpec: Codable, Identifiable, Hashable {
         switch actKind {
         case "app":     return .launchApp(bundleID: actStr ?? "")
         case "url":     return .openURL(actStr ?? "")
+        case "open":    return .openPath(actStr ?? "")
         case "shell":   return .shell(actStr ?? "")
         case "ascript": return .appleScript(actStr ?? "")
         case "lum":     return .luminance(delta: actInt ?? 0)
         case "page":    return .openPage(actStr ?? "")
+        case "key":     return .keyCombo(actStr ?? "")
+        case "text":    return .typeText(actStr ?? "")
+        case "macro":   return .macro(actSteps ?? [])
         default:        return .none
         }
     }

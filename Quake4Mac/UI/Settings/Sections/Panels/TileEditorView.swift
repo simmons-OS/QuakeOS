@@ -127,6 +127,7 @@ struct TileInspectorRail: View {
     @State private var eKind = "none"
     @State private var eValue = ""
     @State private var eDelta = 26
+    @State private var eSteps: [MacroStep] = []
 
     private var stripSelected: Bool {
         session.selectedSlot != nil && session.index(ofPage: pageName) != nil
@@ -175,7 +176,7 @@ struct TileInspectorRail: View {
     }
 
     /// (headline, detail) describing an action in plain language.
-    private func actionSummary(kind: String, str: String?, int: Int?) -> (String, String?) {
+    private func actionSummary(kind: String, str: String?, int: Int?, steps: [MacroStep]? = nil) -> (String, String?) {
         switch kind {
         case "app":
             let name = displayAppName(str ?? "")
@@ -183,17 +184,21 @@ struct TileInspectorRail: View {
         case "url":
             let host = URL(string: str ?? "")?.host ?? (str ?? "—")
             return ("Opens \(host)", str)
+        case "open":    return ("Opens a file or folder", str)
+        case "key":     return ("Sends a keystroke", str)
+        case "text":    return ("Types text", str)
         case "shell":   return ("Runs a shell command", str)
         case "ascript": return ("Runs an AppleScript", str)
         case "lum":     return ("Adjusts brightness by \((int ?? 0) >= 0 ? "+" : "")\(int ?? 0)", nil)
         case "page":    return ("Switches to the \(str ?? "—") page", nil)
+        case "macro":   return ("Runs \(steps?.count ?? 0) steps", nil)
         default:        return ("No action assigned yet", nil)
         }
     }
 
     @ViewBuilder private var libraryInfoCard: some View {
         if let spec = session.selectedSpec {
-            let info = actionSummary(kind: spec.actKind, str: spec.actStr, int: spec.actInt)
+            let info = actionSummary(kind: spec.actKind, str: spec.actStr, int: spec.actInt, steps: spec.actSteps)
             NeonCard("Tile Info") {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 12) {
@@ -235,10 +240,14 @@ struct TileInspectorRail: View {
         switch eKind {
         case "app":     return .launchApp(bundleID: eValue)
         case "url":     return .openURL(eValue)
+        case "open":    return .openPath(eValue)
         case "shell":   return .shell(eValue)
         case "ascript": return .appleScript(eValue)
         case "lum":     return .luminance(delta: eDelta)
         case "page":    return .openPage(eValue)
+        case "key":     return .keyCombo(eValue)
+        case "text":    return .typeText(eValue)
+        case "macro":   return .macro(eSteps)
         default:        return .none
         }
     }
@@ -246,14 +255,18 @@ struct TileInspectorRail: View {
     private func loadInspector() {
         guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot,
               let t = session.tile(page: p, slot: sel) else { return }
-        eTitle = t.title; eValue = ""; eDelta = 26
+        eTitle = t.title; eValue = ""; eDelta = 26; eSteps = []
         switch t.action {
         case .launchApp(let b):   eKind = "app";     eValue = b
         case .openURL(let u):     eKind = "url";     eValue = u
+        case .openPath(let p):    eKind = "open";    eValue = p
         case .shell(let c):       eKind = "shell";   eValue = c
         case .appleScript(let s): eKind = "ascript"; eValue = s
         case .luminance(let d):   eKind = "lum";     eDelta = d
         case .openPage(let n):    eKind = "page";    eValue = n
+        case .keyCombo(let k):    eKind = "key";     eValue = k
+        case .typeText(let t):    eKind = "text";    eValue = t
+        case .macro(let steps):   eKind = "macro";   eSteps = steps
         case .none:               eKind = "none"
         }
     }
@@ -275,6 +288,18 @@ struct TileInspectorRail: View {
         }
     }
 
+    private func choosePath() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            eKind = "open"; eValue = url.path
+            if eTitle.isEmpty { eTitle = url.deletingPathExtension().lastPathComponent }
+            applyInspector()
+        }
+    }
+
     @ViewBuilder private var stripInspectorCard: some View {
         NeonCard("Edit Tile") {
             VStack(alignment: .leading, spacing: 12) {
@@ -285,11 +310,15 @@ struct TileInspectorRail: View {
                         Text("Action").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
                         Picker("", selection: $eKind) {
                             Text("None").tag("none"); Text("Open App").tag("app"); Text("Open URL").tag("url")
+                            Text("Open File/Folder").tag("open"); Text("Keystroke").tag("key"); Text("Type Text").tag("text")
                             Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("Brightness").tag("lum")
-                            Text("Go to Page").tag("page")
+                            Text("Go to Page").tag("page"); Text("Macro Steps").tag("macro")
                         }
                         .labelsHidden().frame(maxWidth: .infinity)
-                        .onChange(of: eKind) { _ in applyInspector() }
+                        .onChange(of: eKind) { newKind in
+                            if newKind == "macro", eSteps.isEmpty { eSteps = [MacroStep.defaultStep()] }
+                            applyInspector()
+                        }
                         actionValueRow
                     }
                 } else {
@@ -322,6 +351,16 @@ struct TileInspectorRail: View {
             }
         case "url":
             labeledField("URL", placeholder: "https://example.com")
+        case "open":
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Path").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+                field($eValue, placeholder: "~/Downloads").onChange(of: eValue) { _ in applyInspector() }
+                HStack { Spacer(); pill("Choose File…", NeonTheme.purple) { choosePath() } }
+            }
+        case "key":
+            labeledField("Keystroke", placeholder: "command+shift+p")
+        case "text":
+            labeledField("Text", placeholder: "Meeting notes")
         case "shell":
             labeledField("Command", placeholder: "open ~/Downloads")
         case "ascript":
@@ -342,9 +381,136 @@ struct TileInspectorRail: View {
                 .labelsHidden().frame(maxWidth: .infinity)
                 .onChange(of: eValue) { _ in applyInspector() }
             }
+        case "macro":
+            macroStepEditor
         default:
             Text("This tile does nothing until you pick an action.")
                 .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
+        }
+    }
+
+    private var macroStepEditor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Steps").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(eSteps.indices), id: \.self) { index in
+                    macroStepRow(index)
+                }
+            }
+            HStack {
+                Spacer()
+                pill("Add Step", NeonTheme.purple) {
+                    eSteps.append(MacroStep.defaultStep())
+                    applyInspector()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func macroStepRow(_ index: Int) -> some View {
+        if eSteps.indices.contains(index) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("\(index + 1)").font(.system(size: 11, weight: .semibold).monospacedDigit())
+                        .foregroundColor(NeonTheme.textTertiary)
+                        .frame(width: 20, alignment: .leading)
+                    Picker("", selection: macroStepKindBinding(index)) {
+                        ForEach(MacroStepKind.allCases) { kind in Text(kind.title).tag(kind) }
+                    }
+                    .labelsHidden()
+                    Spacer(minLength: 4)
+                    Button {
+                        eSteps.remove(at: index)
+                        applyInspector()
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(NeonTheme.magenta)
+                            .frame(width: 28, height: 28)
+                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(NeonTheme.magenta.opacity(0.12)))
+                            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.magenta.opacity(0.35), lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove step")
+                }
+                macroStepValueRow(index)
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.035)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+        }
+    }
+
+    @ViewBuilder private func macroStepValueRow(_ index: Int) -> some View {
+        if eSteps.indices.contains(index) {
+            switch eSteps[index].kind {
+            case .delay:
+                HStack {
+                    Text("Delay").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+                    Stepper("", value: macroStepIntBinding(index), in: 0...MacroStep.maxDelayMs, step: 100)
+                        .labelsHidden()
+                    Text("\(eSteps[index].delayMilliseconds) ms")
+                        .font(.system(size: 12).monospacedDigit()).foregroundColor(NeonTheme.textSecondary)
+                }
+            case .brightness:
+                HStack {
+                    Text("Delta").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+                    Stepper("", value: macroStepIntBinding(index), in: -255...255, step: 13)
+                        .labelsHidden()
+                    Text("\(eSteps[index].intValue)")
+                        .font(.system(size: 12).monospacedDigit()).foregroundColor(NeonTheme.textSecondary)
+                }
+            default:
+                TextField(macroStepPlaceholder(eSteps[index].kind), text: macroStepValueBinding(index))
+                    .textFieldStyle(.plain).font(.system(size: 13)).foregroundColor(NeonTheme.textPrimary)
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.04)))
+                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+            }
+        }
+    }
+
+    private func macroStepKindBinding(_ index: Int) -> Binding<MacroStepKind> {
+        Binding {
+            eSteps.indices.contains(index) ? eSteps[index].kind : .delay
+        } set: { kind in
+            guard eSteps.indices.contains(index) else { return }
+            eSteps[index] = MacroStep.defaultStep(kind: kind)
+            applyInspector()
+        }
+    }
+
+    private func macroStepValueBinding(_ index: Int) -> Binding<String> {
+        Binding {
+            eSteps.indices.contains(index) ? eSteps[index].value : ""
+        } set: { value in
+            guard eSteps.indices.contains(index) else { return }
+            eSteps[index].value = value
+            applyInspector()
+        }
+    }
+
+    private func macroStepIntBinding(_ index: Int) -> Binding<Int> {
+        Binding {
+            eSteps.indices.contains(index) ? eSteps[index].intValue : 0
+        } set: { value in
+            guard eSteps.indices.contains(index) else { return }
+            eSteps[index].intValue = value
+            applyInspector()
+        }
+    }
+
+    private func macroStepPlaceholder(_ kind: MacroStepKind) -> String {
+        switch kind {
+        case .key: return "command+shift+p"
+        case .text: return "Meeting notes"
+        case .app: return "com.apple.Safari"
+        case .url: return "https://example.com"
+        case .openPath: return "~/Downloads"
+        case .shell: return "open ~/Downloads"
+        case .appleScript: return "tell application …"
+        case .page: return PadStore.shared.pages.first?.name ?? "Apps"
+        case .delay, .brightness: return ""
         }
     }
 
