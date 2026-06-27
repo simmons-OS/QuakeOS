@@ -666,6 +666,44 @@ final class DropInAppStoreTests: XCTestCase {
                            "application/json")
             XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), #"{"ok":true}"#)
             XCTAssertEqual(fetcher.urls.map(\.absoluteString), ["https://api.example.com/data"])
+            XCTAssertEqual(fetcher.verifySSLValues, [true])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerProxyHonorsVerifySSLOption() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,
+         "options":[{"key":"verifySsl","type":"bool","default":true}],
+         "proxy":{"methods":["GET"],"verifySslOption":"verifySsl","allow":[{"pattern":"^https://api\\\\.example\\\\.com/"}]}}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        let app = try XCTUnwrap(store.apps.first)
+        let option = try XCTUnwrap(app.manifest.options.first)
+        store.setOptionValue(appID: app.id, option: option, value: "false")
+        let fetcher = ProxyFetchRecorder(response: DropInAppProxyResponse(
+            status: 200,
+            contentType: "application/json",
+            body: Data(#"{"ok":true}"#.utf8)
+        ))
+        let server = DropInAppLoopbackServer(store: store, fetchProxyURL: fetcher.fetch)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appProxyURL(port: port, targetURL: "https://api.example.com/data"))
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "app proxy response")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            XCTAssertEqual(fetcher.verifySSLValues, [false])
             done.fulfill()
         }.resume()
 
@@ -1612,6 +1650,7 @@ final class DropInAppStoreTests: XCTestCase {
 private final class ProxyFetchRecorder {
     private let lock = NSLock()
     private var recordedURLs: [URL] = []
+    private var recordedVerifySSLValues: [Bool] = []
     private let response: DropInAppProxyResponse
 
     init(response: DropInAppProxyResponse) {
@@ -1624,9 +1663,16 @@ private final class ProxyFetchRecorder {
         return recordedURLs
     }
 
-    func fetch(_ url: URL) -> Result<DropInAppProxyResponse, Error> {
+    var verifySSLValues: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedVerifySSLValues
+    }
+
+    func fetch(_ url: URL, verifySSL: Bool) -> Result<DropInAppProxyResponse, Error> {
         lock.lock()
         recordedURLs.append(url)
+        recordedVerifySSLValues.append(verifySSL)
         lock.unlock()
         return .success(response)
     }

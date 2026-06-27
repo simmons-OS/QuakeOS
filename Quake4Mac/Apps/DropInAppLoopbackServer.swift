@@ -14,6 +14,19 @@ enum DropInAppProxyFetchError: Error {
     case responseTooLarge
 }
 
+private final class DropInAppProxyURLSessionDelegate: NSObject, URLSessionDelegate {
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
 struct DropInAppAPIActionRequest: Equatable {
     let action: String
     let query: [String: String]
@@ -232,14 +245,14 @@ final class DropInAppLoopbackServer: ObservableObject {
 
     private let store: DropInAppStore
     private let openURL: (URL) -> Bool
-    private let fetchProxyURL: (URL) -> Result<DropInAppProxyResponse, Error>
+    private let fetchProxyURL: (URL, Bool) -> Result<DropInAppProxyResponse, Error>
     private let handleServerAction: DropInAppServerActionHandler
     private let queue = DispatchQueue(label: "quakeos.dropin.loopback")
     private var listener: NWListener?
 
     init(store: DropInAppStore = .shared,
          openURL: @escaping (URL) -> Bool = DropInAppLoopbackServer.openExternally,
-         fetchProxyURL: @escaping (URL) -> Result<DropInAppProxyResponse, Error> = DropInAppLoopbackServer.fetchProxyURL,
+         fetchProxyURL: @escaping (URL, Bool) -> Result<DropInAppProxyResponse, Error> = DropInAppLoopbackServer.fetchProxyURL,
          handleServerAction: @escaping DropInAppServerActionHandler = { _ in nil }) {
         self.store = store
         self.openURL = openURL
@@ -415,7 +428,7 @@ final class DropInAppLoopbackServer: ObservableObject {
         guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
         guard proxyAllows(app: app, target: target) else { return Self.response(status: 403) }
 
-        switch fetchProxyURL(target) {
+        switch fetchProxyURL(target, verifySSL(for: app)) {
         case .success(let upstream):
             guard upstream.body.count <= Self.maxProxyResponseSize else { return Self.response(status: 502) }
             return Self.response(status: upstream.status,
@@ -424,6 +437,14 @@ final class DropInAppLoopbackServer: ObservableObject {
         case .failure:
             return Self.response(status: 502)
         }
+    }
+
+    private func verifySSL(for app: DropInAppRecord) -> Bool {
+        guard let optionKey = app.manifest.proxy?.verifySslOption,
+              let option = app.manifest.options.first(where: { $0.key == optionKey }) else { return true }
+        return store.optionValue(appID: app.id, option: option)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased() != "false"
     }
 
     private func appOpenResponse(appID: String, url: URL, request: String) -> Data {
@@ -628,15 +649,17 @@ final class DropInAppLoopbackServer: ObservableObject {
         return didOpen
     }
 
-    private static func fetchProxyURL(_ url: URL) -> Result<DropInAppProxyResponse, Error> {
+    private static func fetchProxyURL(_ url: URL, verifySSL: Bool = true) -> Result<DropInAppProxyResponse, Error> {
         var request = URLRequest(url: url, timeoutInterval: 12)
         request.setValue("QuakeOS/DropInAppProxy", forHTTPHeaderField: "User-Agent")
         request.setValue("application/rss+xml, application/xml, text/xml, text/html, */*",
                          forHTTPHeaderField: "Accept")
+        let session = proxyURLSession(verifySSL: verifySSL)
+        defer { session.invalidateAndCancel() }
 
         let semaphore = DispatchSemaphore(value: 0)
         var result: Result<DropInAppProxyResponse, Error>?
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
             if let error {
                 result = .failure(error)
@@ -663,6 +686,14 @@ final class DropInAppLoopbackServer: ObservableObject {
             return .failure(DropInAppProxyFetchError.timeout)
         }
         return result ?? .failure(DropInAppProxyFetchError.timeout)
+    }
+
+    private static func proxyURLSession(verifySSL: Bool) -> URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        guard !verifySSL else { return URLSession(configuration: configuration) }
+        return URLSession(configuration: configuration,
+                          delegate: DropInAppProxyURLSessionDelegate(),
+                          delegateQueue: nil)
     }
 
     private static func headerValue(_ name: String, in lines: [String]) -> String? {
