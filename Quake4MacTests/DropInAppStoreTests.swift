@@ -48,6 +48,55 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(catalog.first?.dest, .dropInApp("static"))
     }
 
+    func testImportFolderCopiesValidAppIntoRootByID() throws {
+        let root = temporaryDirectory()
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "Source Folder", manifest: """
+        {"id":"clock","name":"Clock","entry":"index.html"}
+        """, extraFiles: ["assets/style.css": "body{}"])
+        let source = sourceRoot.appendingPathComponent("Source Folder", isDirectory: true)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importFolder(at: source)
+
+        guard case .success(let app) = result else {
+            return XCTFail("Expected successful import")
+        }
+        XCTAssertEqual(app.id, "clock")
+        XCTAssertEqual(store.apps.map(\.id), ["clock"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock/app.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock/assets/style.css").path))
+    }
+
+    func testImportFolderRejectsDuplicateAppID() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "installed", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """)
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "source", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importFolder(at: sourceRoot.appendingPathComponent("source", isDirectory: true))
+
+        XCTAssertEqual(result, .failure(.duplicateID("clock")))
+        XCTAssertEqual(store.apps.map(\.id), ["clock"])
+    }
+
+    func testImportFolderRejectsInvalidSource() throws {
+        let root = temporaryDirectory()
+        let source = temporaryDirectory()
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importFolder(at: source)
+
+        XCTAssertEqual(result, .failure(.invalidSource("Missing app.json or manifest.json.")))
+        XCTAssertTrue(store.apps.isEmpty)
+    }
+
     func testManifestFileAliasIsAccepted() throws {
         let data = Data(#"{"id":"alias","file":"index.html"}"#.utf8)
         let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
@@ -109,7 +158,9 @@ final class DropInAppStoreTests: XCTestCase {
         try Data(manifest.utf8).write(to: app.appendingPathComponent("app.json"))
         try Data("<html></html>".utf8).write(to: app.appendingPathComponent("index.html"))
         for (path, content) in extraFiles {
-            try Data(content.utf8).write(to: app.appendingPathComponent(path))
+            let url = app.appendingPathComponent(path)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(content.utf8).write(to: url)
         }
     }
 }
