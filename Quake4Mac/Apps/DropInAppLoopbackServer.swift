@@ -84,6 +84,10 @@ final class DropInAppLoopbackServer: ObservableObject {
         guard Self.hostIsLoopback(request: request, port: port) else { return Self.response(status: 403) }
 
         let target = String(parts[1])
+        if let appID = Self.appConfigAppID(target) {
+            return appConfigResponse(appID: appID, request: request)
+        }
+
         guard let request = Self.servedAppRequest(target) else { return Self.response(status: 404) }
         guard let app = store.app(id: request.appID), app.manifest.served else { return Self.response(status: 404) }
         guard let fileURL = DropInAppStore.containedURL(root: app.rootURL, relativePath: request.relativePath) else {
@@ -96,6 +100,26 @@ final class DropInAppLoopbackServer: ObservableObject {
         } catch {
             return Self.response(status: (error as NSError).code == NSFileReadNoSuchFileError ? 404 : 500)
         }
+    }
+
+    private func appConfigResponse(appID: String, request: String) -> Data {
+        guard Self.isSameOrigin(request: request, port: port) else { return Self.response(status: 403) }
+        guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
+        do {
+            let body = try JSONSerialization.data(withJSONObject: store.clientConfigPayload(for: app),
+                                                  options: [.sortedKeys])
+            return Self.response(status: 200, body: body, contentType: "application/json; charset=utf-8")
+        } catch {
+            return Self.response(status: 500)
+        }
+    }
+
+    static func appConfigAppID(_ target: String) -> String? {
+        guard let components = URLComponents(string: "http://127.0.0.1\(target)"),
+              components.path == "/app-config",
+              let appID = components.queryItems?.first(where: { $0.name == "app" })?.value,
+              DropInAppStore.isValidAppID(appID) else { return nil }
+        return appID
     }
 
     static func servedAppRequest(_ target: String) -> (appID: String, relativePath: String)? {
@@ -125,6 +149,21 @@ final class DropInAppLoopbackServer: ObservableObject {
         }
     }
 
+    static func isSameOrigin(request: String, port: UInt16?) -> Bool {
+        guard let port else { return false }
+        let lines = request.components(separatedBy: "\r\n")
+        if let site = headerValue("Sec-Fetch-Site", in: lines) {
+            return site == "same-origin"
+        }
+        if let origin = headerValue("Origin", in: lines) {
+            return isLoopbackURL(origin, port: port)
+        }
+        if let referer = headerValue("Referer", in: lines) {
+            return isLoopbackURL(referer, port: port)
+        }
+        return false
+    }
+
     static func mimeType(for url: URL) -> String {
         switch url.pathExtension.lowercased() {
         case "html", "htm": return "text/html; charset=utf-8"
@@ -143,6 +182,22 @@ final class DropInAppLoopbackServer: ObservableObject {
         case "otf": return "font/otf"
         default: return "application/octet-stream"
         }
+    }
+
+    private static func headerValue(_ name: String, in lines: [String]) -> String? {
+        let prefix = "\(name.lowercased()):"
+        return lines.first { $0.lowercased().hasPrefix(prefix) }?
+            .dropFirst(prefix.count)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func isLoopbackURL(_ value: String, port: UInt16) -> Bool {
+        guard let url = URL(string: value),
+              url.scheme == "http",
+              let host = url.host?.lowercased(),
+              (host == "127.0.0.1" || host == "localhost"),
+              url.port == Int(port) else { return false }
+        return true
     }
 
     private static func response(status: Int, body: Data = Data(), contentType: String = "text/plain; charset=utf-8") -> Data {
