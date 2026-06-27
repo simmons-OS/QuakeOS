@@ -104,7 +104,7 @@ struct DropInAppsSettingsView: View {
     }
 
     private func appRow(_ app: DropInAppRecord) -> some View {
-        let options = DropInAppStore.clientOptions(app.manifest.options)
+        let options = app.manifest.options
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
                 Image(systemName: app.manifest.served ? "network" : "doc.richtext")
@@ -167,20 +167,27 @@ struct DropInAppsSettingsView: View {
                 if isBooleanOption(option) {
                     Toggle(option.label, isOn: Binding(
                         get: { store.optionValue(appID: app.id, option: option) == "true" },
-                        set: { store.setOptionValue(appID: app.id, optionKey: option.key, value: $0 ? "true" : "false") }
+                        set: { store.setOptionValue(appID: app.id, option: option, value: $0 ? "true" : "false") }
                     ))
                     .toggleStyle(.switch)
                     .font(.system(size: 11))
                     .foregroundColor(NeonTheme.textSecondary)
+                } else if option.type == "secret" {
+                    HStack(spacing: 8) {
+                        optionLabel(option)
+                        SecureField(option.key, text: Binding(
+                            get: { store.optionValue(appID: app.id, option: option) },
+                            set: { store.setOptionValue(appID: app.id, option: option, value: $0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                    }
                 } else {
                     HStack(spacing: 8) {
-                        Text(option.label)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(NeonTheme.textSecondary)
-                            .frame(width: 96, alignment: .leading)
+                        optionLabel(option)
                         TextField(option.key, text: Binding(
                             get: { store.optionValue(appID: app.id, option: option) },
-                            set: { store.setOptionValue(appID: app.id, optionKey: option.key, value: $0) }
+                            set: { store.setOptionValue(appID: app.id, option: option, value: $0) }
                         ))
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11))
@@ -189,6 +196,13 @@ struct DropInAppsSettingsView: View {
             }
         }
         .padding(.leading, 36)
+    }
+
+    private func optionLabel(_ option: DropInAppOption) -> some View {
+        Text(option.label)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(DropInAppStore.isClientOption(option) ? NeonTheme.textSecondary : NeonTheme.textTertiary)
+            .frame(width: 96, alignment: .leading)
     }
 
     private func isBooleanOption(_ option: DropInAppOption) -> Bool {
