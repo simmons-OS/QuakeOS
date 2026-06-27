@@ -29,6 +29,9 @@
 		DA5A00000000000000000025 /* DashboardStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000035 /* DashboardStoreTests.swift */; };
 		DA5A00000000000000000026 /* DashboardAuthPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000036 /* DashboardAuthPolicyTests.swift */; };
 		DA5A00000000000000000027 /* HomeDashboardDestinationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA5A00000000000000000037 /* HomeDashboardDestinationTests.swift */; };
+		DA6B00000000000000000020 /* DropInAppStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000010 /* DropInAppStore.swift */; };
+		DA6B00000000000000000021 /* DropInAppsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000011 /* DropInAppsSettingsView.swift */; };
+		DA6B00000000000000000022 /* DropInAppStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000012 /* DropInAppStoreTests.swift */; };
 		AA0000000000000000000013 /* Quake4MacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000010 /* Quake4MacApp.swift */; };
 		AA0000000000000000000091 /* PanelWeb.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000090 /* PanelWeb.swift */; };
 		AA0000000000000000000014 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* ContentView.swift */; };
@@ -81,6 +84,9 @@
 		DA5A00000000000000000035 /* DashboardStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardStoreTests.swift; sourceTree = "<group>"; };
 		DA5A00000000000000000036 /* DashboardAuthPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardAuthPolicyTests.swift; sourceTree = "<group>"; };
 		DA5A00000000000000000037 /* HomeDashboardDestinationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeDashboardDestinationTests.swift; sourceTree = "<group>"; };
+		DA6B00000000000000000010 /* DropInAppStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppStore.swift; sourceTree = "<group>"; };
+		DA6B00000000000000000011 /* DropInAppsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppsSettingsView.swift; sourceTree = "<group>"; };
+		DA6B00000000000000000012 /* DropInAppStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppStoreTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* Quake4Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Quake4Mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000010 /* Quake4MacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Quake4MacApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000090 /* PanelWeb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelWeb.swift; sourceTree = "<group>"; };
@@ -231,8 +237,17 @@
 			isa = PBXGroup;
 			children = (
 				DA5A00000000000000000016 /* WebDashboardsSettingsView.swift */,
+				DA6B00000000000000000011 /* DropInAppsSettingsView.swift */,
 			);
 			path = Advanced;
+			sourceTree = "<group>";
+		};
+		DA6B00000000000000000013 /* Apps */ = {
+			isa = PBXGroup;
+			children = (
+				DA6B00000000000000000010 /* DropInAppStore.swift */,
+			);
+			path = Apps;
 			sourceTree = "<group>";
 		};
 		AA0000000000000000000001 = {
@@ -259,6 +274,7 @@
 				DA5A00000000000000000035 /* DashboardStoreTests.swift */,
 				DA5A00000000000000000036 /* DashboardAuthPolicyTests.swift */,
 				DA5A00000000000000000037 /* HomeDashboardDestinationTests.swift */,
+				DA6B00000000000000000012 /* DropInAppStoreTests.swift */,
 			);
 			path = Quake4MacTests;
 			sourceTree = "<group>";
@@ -274,6 +290,7 @@
 				AA0000000000000000000048 /* SystemMonitor */,
 				AA0000000000000000000062 /* Clock */,
 				AA0000000000000000000065 /* Home */,
+				DA6B00000000000000000013 /* Apps */,
 				DA5A00000000000000000014 /* Dashboards */,
 				AA0000000000000000000020 /* Icons */,
 				AA0000000000000000000022 /* Web */,
@@ -529,6 +546,8 @@
 				DA5A00000000000000000022 /* DashboardAuthPolicy.swift in Sources */,
 				DA5A00000000000000000023 /* DashboardWebView.swift in Sources */,
 				DA5A00000000000000000024 /* WebDashboardsSettingsView.swift in Sources */,
+				DA6B00000000000000000020 /* DropInAppStore.swift in Sources */,
+				DA6B00000000000000000021 /* DropInAppsSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -539,6 +558,7 @@
 				DA5A00000000000000000025 /* DashboardStoreTests.swift in Sources */,
 				DA5A00000000000000000026 /* DashboardAuthPolicyTests.swift in Sources */,
 				DA5A00000000000000000027 /* HomeDashboardDestinationTests.swift in Sources */,
+				DA6B00000000000000000022 /* DropInAppStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
