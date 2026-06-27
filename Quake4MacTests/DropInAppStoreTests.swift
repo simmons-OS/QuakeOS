@@ -200,6 +200,40 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(manifest.proxy?.allow.last?.pattern, #"^https://api\.example\.com/"#)
     }
 
+    func testManifestDecodesGridMetadata() throws {
+        let data = Data("""
+        {"id":"agenda","entry":"agenda.html","served":true,
+         "grid":{"cols":3,"rows":2,"defaults":[
+           {"title":"Open","action":{"kind":"url","url":"https://example.com"}}
+         ]}}
+        """.utf8)
+
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+        let grid = try XCTUnwrap(manifest.grid)
+
+        XCTAssertEqual(grid.cols, 3)
+        XCTAssertEqual(grid.rows, 2)
+        XCTAssertEqual(grid.defaults.count, 1)
+        XCTAssertEqual(grid.defaults.first, .object([
+            "title": .string("Open"),
+            "action": .object([
+                "kind": .string("url"),
+                "url": .string("https://example.com")
+            ])
+        ]))
+    }
+
+    func testManifestIgnoresMalformedGridMetadata() throws {
+        let data = Data("""
+        {"id":"agenda","entry":"agenda.html","served":true,
+         "grid":{"cols":"three","rows":2,"defaults":[]}}
+        """.utf8)
+
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+
+        XCTAssertNil(manifest.grid)
+    }
+
     func testLoopbackServerParsesServedAppRequests() {
         XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/index.html")?.appID, "clock")
         XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/nested%20file.html")?.relativePath,

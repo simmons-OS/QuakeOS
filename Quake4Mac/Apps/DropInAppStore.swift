@@ -69,6 +69,57 @@ struct DropInAppProxyConfig: Decodable, Equatable {
     }
 }
 
+enum DropInAppJSONValue: Decodable, Equatable {
+    case string(String)
+    case number(Double)
+    case bool(Bool)
+    case object([String: DropInAppJSONValue])
+    case array([DropInAppJSONValue])
+    case null
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() {
+            self = .null
+        } else if let value = try? c.decode(Bool.self) {
+            self = .bool(value)
+        } else if let value = try? c.decode(Double.self) {
+            self = .number(value)
+        } else if let value = try? c.decode(String.self) {
+            self = .string(value)
+        } else if let value = try? c.decode([DropInAppJSONValue].self) {
+            self = .array(value)
+        } else if let value = try? c.decode([String: DropInAppJSONValue].self) {
+            self = .object(value)
+        } else {
+            throw DecodingError.dataCorruptedError(in: c, debugDescription: "Unsupported JSON value.")
+        }
+    }
+}
+
+struct DropInAppGridConfig: Decodable, Equatable {
+    let cols: Int
+    let rows: Int
+    let defaults: [DropInAppJSONValue]
+
+    init(cols: Int, rows: Int, defaults: [DropInAppJSONValue] = []) {
+        self.cols = cols
+        self.rows = rows
+        self.defaults = defaults
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case cols, rows, defaults
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        cols = try c.decode(Int.self, forKey: .cols)
+        rows = try c.decode(Int.self, forKey: .rows)
+        defaults = try c.decodeIfPresent([DropInAppJSONValue].self, forKey: .defaults) ?? []
+    }
+}
+
 struct DropInAppManifest: Decodable, Equatable, Identifiable {
     let id: String
     let name: String
@@ -77,13 +128,15 @@ struct DropInAppManifest: Decodable, Equatable, Identifiable {
     let options: [DropInAppOption]
     let server: String?
     let proxy: DropInAppProxyConfig?
+    let grid: DropInAppGridConfig?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, entry, file, served, options, server, proxy
+        case id, name, entry, file, served, options, server, proxy, grid
     }
 
     init(id: String, name: String? = nil, entry: String, served: Bool = false,
-         options: [DropInAppOption] = [], server: String? = nil, proxy: DropInAppProxyConfig? = nil) {
+         options: [DropInAppOption] = [], server: String? = nil, proxy: DropInAppProxyConfig? = nil,
+         grid: DropInAppGridConfig? = nil) {
         self.id = id
         self.name = name ?? id
         self.entry = entry
@@ -91,6 +144,7 @@ struct DropInAppManifest: Decodable, Equatable, Identifiable {
         self.options = options
         self.server = server
         self.proxy = proxy
+        self.grid = grid
     }
 
     init(from decoder: Decoder) throws {
@@ -103,6 +157,7 @@ struct DropInAppManifest: Decodable, Equatable, Identifiable {
         options = try c.decodeIfPresent([DropInAppOption].self, forKey: .options) ?? []
         server = try c.decodeIfPresent(String.self, forKey: .server)
         proxy = try c.decodeIfPresent(DropInAppProxyConfig.self, forKey: .proxy)
+        grid = try? c.decodeIfPresent(DropInAppGridConfig.self, forKey: .grid)
     }
 }
 

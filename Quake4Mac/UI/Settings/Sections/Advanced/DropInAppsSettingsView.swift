@@ -169,6 +169,14 @@ struct DropInAppsSettingsView: View {
                         .padding(.vertical, 4)
                         .background(Capsule().fill(hostCodeBadge.color.opacity(0.12)))
                 }
+                if let gridBadge = gridBadge(for: app) {
+                    Text(gridBadge.title)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(gridBadge.color)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(gridBadge.color.opacity(0.12)))
+                }
                 if !options.isEmpty {
                     Button { store.resetOptionValues(appID: app.id) } label: {
                         Image(systemName: "arrow.counterclockwise")
@@ -246,9 +254,18 @@ struct DropInAppsSettingsView: View {
     }
 
     private func runtimeLabel(for app: DropInAppRecord) -> String {
-        if app.manifest.server != nil { return "Served via loopback; server module" }
-        if app.hasHostCode { return "Static file; executable files detected" }
-        return app.manifest.served ? "Served via loopback" : "Static file"
+        var parts: [String]
+        if app.manifest.server != nil {
+            parts = ["Served via loopback", "server module"]
+        } else if app.hasHostCode {
+            parts = ["Static file", "executable files detected"]
+        } else {
+            parts = [app.manifest.served ? "Served via loopback" : "Static file"]
+        }
+        if app.manifest.served, let grid = app.manifest.grid {
+            parts.append("embedded grid \(grid.cols)x\(grid.rows)")
+        }
+        return parts.joined(separator: "; ")
     }
 
     private func hostCodeBadge(for app: DropInAppRecord,
@@ -262,6 +279,11 @@ struct DropInAppsSettingsView: View {
             return ("HOST CODE", NeonTheme.magenta)
         }
         return nil
+    }
+
+    private func gridBadge(for app: DropInAppRecord) -> (title: String, color: Color)? {
+        guard app.manifest.served, let grid = app.manifest.grid else { return nil }
+        return ("GRID \(grid.cols)x\(grid.rows)", NeonTheme.cyan)
     }
 
     private var issueList: some View {
