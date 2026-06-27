@@ -109,6 +109,11 @@ final class DropInAppLoopbackServer: ObservableObject {
             return appOpenResponse(appID: openRequest.appID, url: openRequest.url, request: request)
         }
 
+        if Self.isAppProxyConfigRequest(target) {
+            guard method == "GET" else { return Self.response(status: 405) }
+            return appProxyConfigResponse(request: request)
+        }
+
         if let proxyTarget = Self.appProxyTarget(target) {
             guard method == "GET" else { return Self.response(status: 405) }
             return appProxyResponse(target: proxyTarget, request: request)
@@ -130,6 +135,19 @@ final class DropInAppLoopbackServer: ObservableObject {
             return Self.response(status: 200, body: body, contentType: Self.mimeType(for: fileURL))
         } catch {
             return Self.response(status: (error as NSError).code == NSFileReadNoSuchFileError ? 404 : 500)
+        }
+    }
+
+    private func appProxyConfigResponse(request: String) -> Data {
+        guard Self.isSameOrigin(request: request, port: port),
+              let appID = Self.requestingAppID(request: request, port: port) else { return Self.response(status: 403) }
+        guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
+        do {
+            let body = try JSONSerialization.data(withJSONObject: store.proxyConfigPayload(for: app),
+                                                  options: [.sortedKeys])
+            return Self.response(status: 200, body: body, contentType: "application/json; charset=utf-8")
+        } catch {
+            return Self.response(status: 500)
         }
     }
 
@@ -194,6 +212,11 @@ final class DropInAppLoopbackServer: ObservableObject {
               let appID = components.queryItems?.first(where: { $0.name == "app" })?.value,
               DropInAppStore.isValidAppID(appID) else { return nil }
         return appID
+    }
+
+    static func isAppProxyConfigRequest(_ target: String) -> Bool {
+        guard let components = URLComponents(string: "http://127.0.0.1\(target)") else { return false }
+        return components.path == "/app-proxy/config"
     }
 
     static func appProxyTarget(_ target: String) -> URL? {

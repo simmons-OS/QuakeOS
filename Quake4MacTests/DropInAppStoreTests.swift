@@ -145,6 +145,43 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertNil(options["hostToken"])
     }
 
+    func testProxyConfigPayloadIncludesSecretAndServerOnlyOptions() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        let secretStore = MemoryDropInAppSecretStore()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"seconds","type":"boolean","default":false},
+          {"key":"token","type":"secret","default":"abc"},
+          {"key":"hostToken","type":"text","default":"server","serverOnly":true}
+        ],"proxy":{"allow":[{"option":"host"}]}}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults, secretStore: secretStore)
+        let app = try XCTUnwrap(store.apps.first)
+        store.setOptionValue(appID: app.id, optionKey: "theme", value: "light")
+        store.setOptionValue(appID: app.id, optionKey: "seconds", value: "true")
+        for option in app.manifest.options {
+            if option.key == "token" {
+                store.setOptionValue(appID: app.id, option: option, value: "stored-secret")
+            } else if option.key == "hostToken" {
+                store.setOptionValue(appID: app.id, option: option, value: "server-secret")
+            }
+        }
+
+        let payload = store.proxyConfigPayload(for: app)
+        let api = try XCTUnwrap(payload["api"] as? [String: String])
+        let options = try XCTUnwrap(payload["options"] as? [String: Any])
+
+        XCTAssertEqual(payload["app"] as? String, "clock")
+        XCTAssertEqual(api["config"], "/app-proxy/config")
+        XCTAssertEqual(api["proxy"], "/app-proxy")
+        XCTAssertEqual(options["theme"] as? String, "light")
+        XCTAssertEqual(options["seconds"] as? Bool, true)
+        XCTAssertEqual(options["token"] as? String, "stored-secret")
+        XCTAssertEqual(options["hostToken"] as? String, "server-secret")
+    }
+
     func testManifestDecodesProxyAllowRules() throws {
         let data = Data("""
         {"id":"proxy","entry":"index.html","served":true,
@@ -317,6 +354,77 @@ final class DropInAppStoreTests: XCTestCase {
             XCTAssertEqual(options?["theme"] as? String, "dark")
             XCTAssertEqual(options?["seconds"] as? Bool, true)
             XCTAssertNil(options?["token"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerServesSameOriginProxyConfigWithSecrets() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        let secretStore = MemoryDropInAppSecretStore()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"token","type":"secret"},
+          {"key":"hostToken","type":"text","serverOnly":true}
+        ]}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults, secretStore: secretStore)
+        let app = try XCTUnwrap(store.apps.first)
+        store.setOptionValue(appID: "clock", optionKey: "theme", value: "light")
+        for option in app.manifest.options {
+            if option.key == "token" {
+                store.setOptionValue(appID: "clock", option: option, value: "stored-secret")
+            } else if option.key == "hostToken" {
+                store.setOptionValue(appID: "clock", option: option, value: "server-secret")
+            }
+        }
+        let server = DropInAppLoopbackServer(store: store)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appProxyConfigURL(port: port))
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "app proxy config response")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let json = try? JSONSerialization.jsonObject(with: data ?? Data()) as? [String: Any]
+            let api = json?["api"] as? [String: String]
+            let options = json?["options"] as? [String: Any]
+            XCTAssertEqual(json?["app"] as? String, "clock")
+            XCTAssertEqual(api?["config"], "/app-proxy/config")
+            XCTAssertEqual(options?["theme"] as? String, "light")
+            XCTAssertEqual(options?["token"] as? String, "stored-secret")
+            XCTAssertEqual(options?["hostToken"] as? String, "server-secret")
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsProxyConfigWithoutRequestingAppReferer() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root))
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appProxyConfigURL(port: port))
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        let done = expectation(description: "app proxy config rejection")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
             done.fulfill()
         }.resume()
 
@@ -789,6 +897,15 @@ final class DropInAppStoreTests: XCTestCase {
             URLQueryItem(name: "app", value: appID),
             URLQueryItem(name: "url", value: targetURL)
         ]
+        return try XCTUnwrap(components.url)
+    }
+
+    private func appProxyConfigURL(port: UInt16) throws -> URL {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = Int(port)
+        components.path = "/app-proxy/config"
         return try XCTUnwrap(components.url)
     }
 
