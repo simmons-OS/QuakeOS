@@ -132,6 +132,9 @@ struct TileInspectorRail: View {
     @State private var eSteps: [MacroStep] = []
     @State private var eIconKind = "auto"
     @State private var eIconValue = ""
+    @State private var eIconCachePath = ""
+    @State private var eIconStatus = ""
+    @State private var eIconFetching = false
 
     private var stripSelected: Bool {
         session.selectedSlot != nil && session.index(ofPage: pageName) != nil
@@ -261,6 +264,7 @@ struct TileInspectorRail: View {
         switch eIconKind {
         case "emoji": return .emoji(eIconValue)
         case "image": return .imagePath(eIconValue)
+        case "url": return .imageURL(url: eIconValue, cachePath: eIconCachePath)
         default: return nil
         }
     }
@@ -268,10 +272,13 @@ struct TileInspectorRail: View {
     private func loadInspector() {
         guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot,
               let t = session.tile(page: p, slot: sel) else { return }
-        eTitle = t.title; eValue = ""; eDelta = 26; eSteps = []; eIconKind = "auto"; eIconValue = ""
+        eTitle = t.title; eValue = ""; eDelta = 26; eSteps = []
+        eIconKind = "auto"; eIconValue = ""; eIconCachePath = ""; eIconStatus = ""; eIconFetching = false
         switch t.customIcon {
         case .emoji(let value): eIconKind = "emoji"; eIconValue = value
         case .imagePath(let value): eIconKind = "image"; eIconValue = value
+        case .imageURL(let url, let cachePath):
+            eIconKind = "url"; eIconValue = url; eIconCachePath = cachePath; eIconStatus = "Cached"
         case .none: break
         }
         switch t.action {
@@ -330,8 +337,49 @@ struct TileInspectorRail: View {
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK, let url = panel.url {
-            eIconKind = "image"; eIconValue = url.path
+            eIconKind = "image"; eIconValue = url.path; eIconCachePath = ""; eIconStatus = ""
             applyIcon()
+        }
+    }
+
+    private func iconURLChanged() {
+        eIconCachePath = ""
+        eIconStatus = ""
+        applyIcon()
+    }
+
+    private func fetchIconURL() {
+        let urlString = eIconValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !urlString.isEmpty, !eIconFetching else { return }
+        guard let pageIndex = session.index(ofPage: pageName),
+              let selectedSlot = session.selectedSlot else { return }
+        eIconFetching = true
+        eIconStatus = "Fetching..."
+        Task {
+            do {
+                let icon = try await TileIconCache.fetchIcon(from: urlString)
+                await MainActor.run {
+                    guard session.index(ofPage: pageName) == pageIndex,
+                          session.selectedSlot == selectedSlot else { return }
+                    if case .imageURL(let url, let cachePath) = icon {
+                        eIconKind = "url"
+                        eIconValue = url
+                        eIconCachePath = cachePath
+                        eIconStatus = "Cached"
+                        eIconFetching = false
+                        applyIcon()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    guard session.index(ofPage: pageName) == pageIndex,
+                          session.selectedSlot == selectedSlot else { return }
+                    eIconCachePath = ""
+                    eIconStatus = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                    eIconFetching = false
+                    applyIcon()
+                }
+            }
         }
     }
 
@@ -432,10 +480,17 @@ struct TileInspectorRail: View {
                 Text("Automatic").tag("auto")
                 Text("Emoji").tag("emoji")
                 Text("Image").tag("image")
+                Text("Image URL").tag("url")
             }
             .labelsHidden()
             .frame(maxWidth: .infinity)
-            .onChange(of: eIconKind) { _ in applyIcon() }
+            .onChange(of: eIconKind) { newKind in
+                if newKind != "url" {
+                    eIconCachePath = ""
+                    eIconStatus = ""
+                }
+                applyIcon()
+            }
 
             switch eIconKind {
             case "emoji":
@@ -444,6 +499,22 @@ struct TileInspectorRail: View {
                 VStack(alignment: .leading, spacing: 8) {
                     field($eIconValue, placeholder: "~/Pictures/icon.png", onChange: applyIcon)
                     HStack { Spacer(); pill("Choose Image…", NeonTheme.purple) { chooseIconImage() } }
+                }
+            case "url":
+                VStack(alignment: .leading, spacing: 8) {
+                    field($eIconValue, placeholder: "https://example.com/icon.png", onChange: iconURLChanged)
+                    HStack {
+                        if !eIconStatus.isEmpty {
+                            Text(eIconStatus)
+                                .font(.system(size: 11))
+                                .foregroundColor(eIconCachePath.isEmpty && !eIconFetching ? NeonTheme.magenta : NeonTheme.textTertiary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer()
+                        pill(eIconFetching ? "Fetching..." : "Fetch", NeonTheme.purple) { fetchIconURL() }
+                            .disabled(eIconFetching || eIconValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
                 }
             default:
                 EmptyView()

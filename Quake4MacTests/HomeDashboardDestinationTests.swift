@@ -59,6 +59,14 @@ final class MacroActionTests: XCTestCase {
 
 final class TileIconTests: XCTestCase {
     func testTileIconRoundTripsThroughJSON() throws {
+        let icon = TileIcon.imageURL(url: "https://example.com/icon.png", cachePath: "/tmp/icon.png")
+        let data = try JSONEncoder().encode(icon)
+        let decoded = try JSONDecoder().decode(TileIcon.self, from: data)
+
+        XCTAssertEqual(decoded, icon)
+    }
+
+    func testLocalImagePathIconStillRoundTripsThroughJSON() throws {
         let icon = TileIcon.imagePath("~/Pictures/icon.png")
         let data = try JSONEncoder().encode(icon)
         let decoded = try JSONDecoder().decode(TileIcon.self, from: data)
@@ -66,9 +74,29 @@ final class TileIconTests: XCTestCase {
         XCTAssertEqual(decoded, icon)
     }
 
+    func testTileIconCacheSniffsSupportedImages() throws {
+        let png = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        let jpg = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        let svg = Data("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>".utf8)
+
+        XCTAssertEqual(TileIconCache.imageInfo(from: png)?.fileExtension, "png")
+        XCTAssertEqual(TileIconCache.imageInfo(from: jpg)?.mimeType, "image/jpeg")
+        XCTAssertEqual(TileIconCache.imageInfo(from: svg)?.fileExtension, "svg")
+        XCTAssertNil(TileIconCache.imageInfo(from: Data("not an image".utf8)))
+    }
+
+    func testTileIconCacheFilenameIsDeterministic() {
+        let first = TileIconCache.cacheFilename(for: "https://example.com/icon.png", fileExtension: "png")
+        let second = TileIconCache.cacheFilename(for: "https://example.com/icon.png", fileExtension: "png")
+
+        XCTAssertEqual(first, second)
+        XCTAssertTrue(first.hasSuffix(".png"))
+    }
+
     func testCustomIconDisablesAutomaticWebIcon() {
         let automatic = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .openURL("https://example.com"))
-        let custom = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .openURL("https://example.com"), customIcon: .emoji("📘"))
+        let custom = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .openURL("https://example.com"),
+                          customIcon: .imageURL(url: "https://example.com/icon.png", cachePath: "/tmp/icon.png"))
 
         XCTAssertTrue(automatic.allowsAutomaticWebIcon)
         XCTAssertFalse(custom.allowsAutomaticWebIcon)
@@ -80,6 +108,26 @@ final class TileIconTests: XCTestCase {
         let json = try XCTUnwrap(encoded.removingPercentEncoding)
         let data = try XCTUnwrap(json.data(using: .utf8))
         let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
+        let icon = try XCTUnwrap(keys.first?["icon"] as? String)
+
+        XCTAssertTrue(icon.hasPrefix("data:image/png;base64,"))
+    }
+
+    func testCachedURLIconRendersIntoScreenModel() throws {
+        let data = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/l3Wk8QAAAABJRU5ErkJggg=="))
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("png")
+        try data.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let tile = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .none,
+                        customIcon: .imageURL(url: "https://example.com/icon.png", cachePath: url.path))
+        let encoded = try XCTUnwrap(ScreenModel.buildModelEnc(pages: [PadPage(name: "Test", tiles: [tile])]))
+        let json = try XCTUnwrap(encoded.removingPercentEncoding)
+        let dataJSON = try XCTUnwrap(json.data(using: .utf8))
+        let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: dataJSON) as? [[String: Any]])
         let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
         let icon = try XCTUnwrap(keys.first?["icon"] as? String)
 

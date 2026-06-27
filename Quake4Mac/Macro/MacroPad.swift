@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import CryptoKit
 
 // MARK: - Model
 
@@ -28,13 +29,17 @@ enum PadAction {
 enum TileIcon: Codable, Hashable {
     case emoji(String)
     case imagePath(String)
+    case imageURL(url: String, cachePath: String)
 
-    private enum CodingKeys: String, CodingKey { case kind, value }
+    private enum CodingKeys: String, CodingKey { case kind, value, cachePath }
 
     var isEmpty: Bool {
         switch self {
         case .emoji(let value), .imagePath(let value):
             return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .imageURL(let url, let cachePath):
+            return url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || cachePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 
@@ -47,6 +52,9 @@ enum TileIcon: Codable, Hashable {
         switch kind {
         case "emoji": self = .emoji(value)
         case "image": self = .imagePath(value)
+        case "url":
+            let cachePath = try container.decodeIfPresent(String.self, forKey: .cachePath) ?? ""
+            self = .imageURL(url: value, cachePath: cachePath)
         default: self = .emoji("")
         }
     }
@@ -60,7 +68,118 @@ enum TileIcon: Codable, Hashable {
         case .imagePath(let value):
             try container.encode("image", forKey: .kind)
             try container.encode(value, forKey: .value)
+        case .imageURL(let url, let cachePath):
+            try container.encode("url", forKey: .kind)
+            try container.encode(url, forKey: .value)
+            try container.encode(cachePath, forKey: .cachePath)
         }
+    }
+}
+
+enum TileIconCache {
+    static let maxBytes = 3 * 1024 * 1024
+
+    struct ImageInfo: Equatable {
+        let fileExtension: String
+        let mimeType: String
+    }
+
+    enum CacheError: LocalizedError {
+        case invalidURL
+        case unsupportedScheme
+        case badStatus(Int)
+        case tooLarge
+        case unsupportedImage
+        case missingCacheDirectory
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidURL: return "Enter a valid image URL."
+            case .unsupportedScheme: return "Image URLs must use http or https."
+            case .badStatus(let status): return "The image request failed with HTTP \(status)."
+            case .tooLarge: return "Image URLs are limited to 3 MB."
+            case .unsupportedImage: return "The URL did not return a supported image."
+            case .missingCacheDirectory: return "The icon cache folder could not be created."
+            }
+        }
+    }
+
+    static func imageInfo(from data: Data) -> ImageInfo? {
+        let bytes = [UInt8](data.prefix(16))
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]) {
+            return ImageInfo(fileExtension: "png", mimeType: "image/png")
+        }
+        if bytes.count >= 3, bytes[0] == 0xFF, bytes[1] == 0xD8, bytes[2] == 0xFF {
+            return ImageInfo(fileExtension: "jpg", mimeType: "image/jpeg")
+        }
+        if data.starts(with: Data("GIF87a".utf8)) || data.starts(with: Data("GIF89a".utf8)) {
+            return ImageInfo(fileExtension: "gif", mimeType: "image/gif")
+        }
+        if bytes.count >= 12,
+           bytes[0...3] == [0x52, 0x49, 0x46, 0x46],
+           bytes[8...11] == [0x57, 0x45, 0x42, 0x50] {
+            return ImageInfo(fileExtension: "webp", mimeType: "image/webp")
+        }
+        if bytes.starts(with: [0x42, 0x4D]) {
+            return ImageInfo(fileExtension: "bmp", mimeType: "image/bmp")
+        }
+        if bytes.starts(with: [0x00, 0x00, 0x01, 0x00]) {
+            return ImageInfo(fileExtension: "ico", mimeType: "image/x-icon")
+        }
+        if let text = String(data: data.prefix(512), encoding: .utf8) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if trimmed.hasPrefix("<svg") || (trimmed.hasPrefix("<?xml") && trimmed.contains("<svg")) {
+                return ImageInfo(fileExtension: "svg", mimeType: "image/svg+xml")
+            }
+        }
+        return nil
+    }
+
+    static func cacheFilename(for urlString: String, fileExtension: String) -> String {
+        let digest = SHA256.hash(data: Data(urlString.utf8))
+        let hash = digest.map { String(format: "%02x", $0) }.joined().prefix(16)
+        return "\(hash).\(fileExtension)"
+    }
+
+    static func cachedDataURL(path: String) -> String? {
+        let expanded = (path as NSString).expandingTildeInPath
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: expanded)),
+              let info = imageInfo(from: data) else { return nil }
+        return "data:\(info.mimeType);base64,\(data.base64EncodedString())"
+    }
+
+    static func fetchIcon(from urlString: String) async throws -> TileIcon {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased() else {
+            throw CacheError.invalidURL
+        }
+        guard scheme == "http" || scheme == "https" else { throw CacheError.unsupportedScheme }
+
+        var request = URLRequest(url: url)
+        request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw CacheError.badStatus(http.statusCode)
+        }
+
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > maxBytes { throw CacheError.tooLarge }
+        }
+        guard let info = imageInfo(from: data) else { throw CacheError.unsupportedImage }
+
+        guard let cacheDirectory else { throw CacheError.missingCacheDirectory }
+        try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        let fileURL = cacheDirectory.appendingPathComponent(cacheFilename(for: trimmed, fileExtension: info.fileExtension))
+        try data.write(to: fileURL, options: .atomic)
+        return .imageURL(url: trimmed, cachePath: fileURL.path)
+    }
+
+    private static var cacheDirectory: URL? {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Quake4Mac", isDirectory: true)
+            .appendingPathComponent("IconCache", isDirectory: true)
     }
 }
 

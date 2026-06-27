@@ -163,10 +163,8 @@ enum ScreenModel {
            let img = emoji(value) {
             guard let r = rasterize(img) else { return nil }
             return ("data:image/png;base64,\(r.b64)", r.glow ?? hex(NSColor(tile.tint)), false)
-        } else if case .imagePath(let path)? = tile.customIcon,
-                  let img = NSImage(contentsOfFile: (path as NSString).expandingTildeInPath) {
-            guard let r = rasterize(img) else { return nil }
-            return ("data:image/png;base64,\(r.b64)", r.glow, false)
+        } else if let info = customImageInfo(for: tile.customIcon) {
+            return info
         } else if let name = tile.image, let img = DecoAssets.icon(name) {           // their PNG → neon glow in its own colour
             guard let r = rasterize(img) else { return nil }
             return ("data:image/png;base64,\(r.b64)", r.glow, false)
@@ -178,6 +176,23 @@ enum ScreenModel {
             return ("data:image/png;base64,\(r.b64)", r.glow ?? hex(NSColor(tile.tint)), false)
         }
         return nil
+    }
+
+    private static func customImageInfo(for icon: TileIcon?) -> (url: String, glow: String?, app: Bool)? {
+        let path: String
+        switch icon {
+        case .imagePath(let value): path = value
+        case .imageURL(_, let cachePath): path = cachePath
+        case .emoji, .none: return nil
+        }
+        let expanded = (path as NSString).expandingTildeInPath
+        if let dataURL = TileIconCache.cachedDataURL(path: expanded),
+           dataURL.hasPrefix("data:image/svg+xml") {
+            return (dataURL, nil, false)
+        }
+        guard let img = NSImage(contentsOfFile: expanded),
+              let r = rasterize(img) else { return nil }
+        return ("data:image/png;base64,\(r.b64)", r.glow, false)
     }
 
     static func emoji(_ value: String) -> NSImage? {

@@ -20,13 +20,21 @@ struct TileGlyphView: View {
 
     /// Best real icon available synchronously (PNG or app icon); favicon arrives async into state.
     private var realIcon: NSImage? {
-        if case .imagePath(let path)? = customIcon {
+        if let path = customImagePath {
             let expanded = (path as NSString).expandingTildeInPath
             if let img = NSImage(contentsOfFile: expanded) { return img }
         }
         if let image, let p = DecoAssets.icon(image) { return p }
         if let bid = appBundleID, let a = DecoAssets.appIcon(bid) { return a }
         return favicon
+    }
+
+    private var customImagePath: String? {
+        switch customIcon {
+        case .imagePath(let path): return path
+        case .imageURL(_, let cachePath): return cachePath
+        case .emoji, .none: return nil
+        }
     }
 
     private var emoji: String? {
