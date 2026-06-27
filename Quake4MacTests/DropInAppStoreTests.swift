@@ -328,6 +328,84 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertTrue(app.hasHostCode)
     }
 
+    func testImportArchiveCopiesValidWrappedAppIntoRootByID() throws {
+        let root = temporaryDirectory()
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "Clock Source", manifest: """
+        {"id":"clock","name":"Clock","entry":"index.html"}
+        """, extraFiles: ["assets/style.css": "body{}"])
+        let archive = temporaryDirectory().appendingPathExtension("zip")
+        try createZip(from: sourceRoot.appendingPathComponent("Clock Source", isDirectory: true),
+                      to: archive,
+                      keepParent: true)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importArchive(at: archive)
+
+        guard case .success(let app) = result else {
+            return XCTFail("Expected successful archive import")
+        }
+        XCTAssertEqual(app.id, "clock")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock/app.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock/assets/style.css").path))
+    }
+
+    func testImportArchiveAcceptsManifestAtArchiveRoot() throws {
+        let root = temporaryDirectory()
+        let flatRoot = temporaryDirectory()
+        try writeApp(root: flatRoot, folder: "flat", manifest: """
+        {"id":"flat","entry":"index.html"}
+        """)
+        let archive = temporaryDirectory().appendingPathExtension("zip")
+        try createZip(from: flatRoot.appendingPathComponent("flat", isDirectory: true),
+                      to: archive,
+                      keepParent: false)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importArchive(at: archive)
+
+        guard case .success(let app) = result else {
+            return XCTFail("Expected successful flat archive import")
+        }
+        XCTAssertEqual(app.id, "flat")
+    }
+
+    func testImportArchiveRequiresConfirmationForHostCode() throws {
+        let root = temporaryDirectory()
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "source", manifest: """
+        {"id":"clock","name":"Clock","entry":"index.html","served":true,"server":"server.js"}
+        """, extraFiles: ["server.js": ""])
+        let archive = temporaryDirectory().appendingPathExtension("zip")
+        try createZip(from: sourceRoot.appendingPathComponent("source", isDirectory: true),
+                      to: archive,
+                      keepParent: true)
+        let store = DropInAppStore(rootURL: root)
+
+        XCTAssertEqual(store.importArchive(at: archive), .failure(.requiresHostCodeConfirmation("Clock")))
+        XCTAssertTrue(store.apps.isEmpty)
+    }
+
+    func testExportArchiveWritesInstallableZip() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """, extraFiles: ["assets/style.css": "body{}"])
+        let store = DropInAppStore(rootURL: root)
+        let archive = temporaryDirectory().appendingPathExtension("zip")
+
+        let result = store.exportArchive(appID: "clock", to: archive)
+
+        guard case .success = result else {
+            return XCTFail("Expected successful archive export")
+        }
+        let extracted = temporaryDirectory()
+        try FileManager.default.createDirectory(at: extracted, withIntermediateDirectories: true)
+        try extractZip(archive, to: extracted)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: extracted.appendingPathComponent("clock/app.json").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: extracted.appendingPathComponent("clock/assets/style.css").path))
+    }
+
     func testRemoveAppDeletesFolderAndSavedOptionValues() throws {
         let root = temporaryDirectory()
         let defaults = temporaryDefaults()
@@ -447,6 +525,35 @@ final class DropInAppStoreTests: XCTestCase {
             let url = app.appendingPathComponent(path)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(content.utf8).write(to: url)
+        }
+    }
+
+    private func createZip(from source: URL, to destination: URL, keepParent: Bool) throws {
+        var arguments = ["-c", "-k", "--sequesterRsrc"]
+        if keepParent {
+            arguments.append("--keepParent")
+        }
+        arguments.append(contentsOf: [source.path, destination.path])
+        try runDitto(arguments)
+    }
+
+    private func extractZip(_ source: URL, to destination: URL) throws {
+        try runDitto(["-x", "-k", source.path, destination.path])
+    }
+
+    private func runDitto(_ arguments: [String]) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+        try process.run()
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            let message = String(data: data, encoding: .utf8) ?? "ditto failed"
+            throw NSError(domain: "DropInAppStoreTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 }

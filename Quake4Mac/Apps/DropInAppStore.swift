@@ -123,6 +123,20 @@ enum DropInAppRemovalError: LocalizedError, Equatable {
     }
 }
 
+enum DropInAppExportError: LocalizedError, Equatable {
+    case missing(String)
+    case exportFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missing(let id):
+            return "The app \"\(id)\" is no longer installed."
+        case .exportFailed(let message):
+            return message
+        }
+    }
+}
+
 final class DropInAppStore: ObservableObject {
     static let shared = DropInAppStore()
 
@@ -238,6 +252,47 @@ final class DropInAppStore: ObservableObject {
         }
     }
 
+    func importArchive(at archiveURL: URL, allowHostCode: Bool = false) -> Result<DropInAppRecord, DropInAppImportError> {
+        let tempRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("QuakeOSDropInImport-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        } catch {
+            return .failure(.copyFailed(error.localizedDescription))
+        }
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        if let error = runDitto(arguments: ["-x", "-k", archiveURL.standardizedFileURL.path, tempRoot.path]) {
+            return .failure(.invalidSource("Archive could not be extracted: \(error)"))
+        }
+        guard let appRoot = archiveAppRoot(in: tempRoot) else {
+            return .failure(.invalidSource("Archive does not contain a valid drop-in app."))
+        }
+        return importFolder(at: appRoot, allowHostCode: allowHostCode)
+    }
+
+    func exportArchive(appID: String, to destinationURL: URL) -> Result<Void, DropInAppExportError> {
+        guard let app = app(id: appID) else { return .failure(.missing(appID)) }
+        guard Self.url(app.rootURL, isContainedIn: rootURL) else {
+            return .failure(.exportFailed("App folder is outside the drop-in folder."))
+        }
+
+        let destination = destinationURL.standardizedFileURL
+        do {
+            try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if fileManager.fileExists(atPath: destination.path) {
+                try fileManager.removeItem(at: destination)
+            }
+        } catch {
+            return .failure(.exportFailed(error.localizedDescription))
+        }
+
+        if let error = runDitto(arguments: ["-c", "-k", "--sequesterRsrc", "--keepParent", app.rootURL.path, destination.path]) {
+            return .failure(.exportFailed(error))
+        }
+        return .success(())
+    }
+
     func removeApp(id: String) -> Result<Void, DropInAppRemovalError> {
         guard let app = app(id: id) else { return .failure(.missing(id)) }
 
@@ -319,6 +374,12 @@ final class DropInAppStore: ObservableObject {
         let resolved = root.appendingPathComponent(normalized).standardizedFileURL
         guard resolved.path == rootPath || resolved.path.hasPrefix(rootPath + "/") else { return nil }
         return resolved
+    }
+
+    static func url(_ url: URL, isContainedIn root: URL) -> Bool {
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        return path == rootPath || path.hasPrefix(rootPath + "/")
     }
 
     static func clientOptions(_ options: [DropInAppOption]) -> [DropInAppOption] {
@@ -405,6 +466,20 @@ final class DropInAppStore: ObservableObject {
         }
     }
 
+    private func archiveAppRoot(in folder: URL) -> URL? {
+        if case .success = scan(folder: folder) {
+            return folder
+        }
+        guard let children = try? fileManager.contentsOfDirectory(
+            at: folder,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else { return nil }
+        let directories = children.filter(\.isDirectory)
+        guard directories.count == 1, case .success = scan(folder: directories[0]) else { return nil }
+        return directories[0]
+    }
+
     private func folderContainsExecutableCode(_ folder: URL) -> Bool {
         guard let enumerator = fileManager.enumerator(at: folder,
                                                      includingPropertiesForKeys: [.isRegularFileKey],
@@ -415,6 +490,27 @@ final class DropInAppStore: ObservableObject {
             return true
         }
         return false
+    }
+
+    private func runDitto(arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = arguments
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = output
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+            let data = output.fileHandleForReading.readDataToEndOfFile()
+            let message = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard process.terminationStatus != 0 else { return nil }
+            return message.isEmpty ? "ditto exited with status \(process.terminationStatus)" : message
+        } catch {
+            return error.localizedDescription
+        }
     }
 }
 

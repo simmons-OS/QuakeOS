@@ -51,6 +51,10 @@ struct DropInAppsSettingsView: View {
                         Label("Import Folder", systemImage: "square.and.arrow.down")
                     }
                     .buttonStyle(.borderedProminent)
+                    Button { chooseImportArchive() } label: {
+                        Label("Import ZIP", systemImage: "archivebox")
+                    }
+                    .buttonStyle(.bordered)
                     Button { NSWorkspace.shared.open(store.rootURL) } label: {
                         Label("Open Folder", systemImage: "folder")
                     }
@@ -136,6 +140,11 @@ struct DropInAppsSettingsView: View {
                     .buttonStyle(.bordered)
                     .help("Reset options")
                 }
+                Button { exportApp(app) } label: {
+                    Image(systemName: "square.and.arrow.up")
+                }
+                .buttonStyle(.bordered)
+                .help("Export ZIP")
                 Button(role: .destructive) { pendingRemoval = app } label: {
                     Image(systemName: "trash")
                 }
@@ -236,8 +245,32 @@ struct DropInAppsSettingsView: View {
         importFolder(url, allowHostCode: false)
     }
 
+    private func chooseImportArchive() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Drop-In App ZIP"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.allowedContentTypes = [.zip]
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        importArchive(url, allowHostCode: false)
+    }
+
     private func importFolder(_ url: URL, allowHostCode: Bool) {
-        switch store.importFolder(at: url, allowHostCode: allowHostCode) {
+        handleImportResult(store.importFolder(at: url, allowHostCode: allowHostCode),
+                           source: PendingHostCodeImport(url: url, isArchive: false))
+    }
+
+    private func importArchive(_ url: URL, allowHostCode: Bool) {
+        handleImportResult(store.importArchive(at: url, allowHostCode: allowHostCode),
+                           source: PendingHostCodeImport(url: url, isArchive: true))
+    }
+
+    private func handleImportResult(_ result: Result<DropInAppRecord, DropInAppImportError>,
+                                    source: PendingHostCodeImport) {
+        switch result {
         case .success(let app):
             importError = ""
             importMessage = "Imported \(app.manifest.name)."
@@ -245,10 +278,28 @@ struct DropInAppsSettingsView: View {
         case .failure(.requiresHostCodeConfirmation(let name)):
             importMessage = ""
             importError = "\"\(name)\" needs confirmation before import."
-            pendingHostCodeImport = PendingHostCodeImport(url: url)
+            pendingHostCodeImport = source
         case .failure(let error):
             importMessage = ""
             importError = error.errorDescription ?? "Import failed."
+        }
+    }
+
+    private func exportApp(_ app: DropInAppRecord) {
+        let panel = NSSavePanel()
+        panel.title = "Export Drop-In App"
+        panel.nameFieldStringValue = "\(app.id).zip"
+        panel.allowedContentTypes = [.zip]
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        switch store.exportArchive(appID: app.id, to: url) {
+        case .success:
+            importError = ""
+            importMessage = "Exported \(app.manifest.name)."
+        case .failure(let error):
+            importMessage = ""
+            importError = error.errorDescription ?? "Export failed."
         }
     }
 
@@ -264,7 +315,11 @@ struct DropInAppsSettingsView: View {
 
     private func confirmHostCodeImport() {
         guard let pending = pendingHostCodeImport else { return }
-        importFolder(pending.url, allowHostCode: true)
+        if pending.isArchive {
+            importArchive(pending.url, allowHostCode: true)
+        } else {
+            importFolder(pending.url, allowHostCode: true)
+        }
     }
 
     private func removePendingApp() {
@@ -283,4 +338,5 @@ struct DropInAppsSettingsView: View {
 
 private struct PendingHostCodeImport {
     let url: URL
+    let isArchive: Bool
 }
