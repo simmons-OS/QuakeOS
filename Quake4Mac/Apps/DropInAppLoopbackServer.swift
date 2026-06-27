@@ -16,8 +16,33 @@ enum DropInAppProxyFetchError: Error {
 
 struct DropInAppAPIActionRequest: Equatable {
     let action: String
+    let query: [String: String]
     let url: URL?
 }
+
+struct DropInAppServerActionContext {
+    let app: DropInAppRecord
+    let action: String
+    let query: [String: String]
+    let options: [String: Any]
+    let serverModuleURL: URL
+}
+
+struct DropInAppServerActionResponse {
+    let status: Int
+    let contentType: String
+    let body: Data
+
+    static func json(_ object: Any, status: Int = 200) throws -> DropInAppServerActionResponse {
+        DropInAppServerActionResponse(status: status,
+                                      contentType: "application/json; charset=utf-8",
+                                      body: try JSONSerialization.data(withJSONObject: object,
+                                                                       options: [.sortedKeys]))
+    }
+}
+
+typealias DropInAppServerActionHandler =
+    (DropInAppServerActionContext) -> Result<DropInAppServerActionResponse, Error>?
 
 final class DropInAppLoopbackServer: ObservableObject {
     static let shared = DropInAppLoopbackServer()
@@ -29,15 +54,18 @@ final class DropInAppLoopbackServer: ObservableObject {
     private let store: DropInAppStore
     private let openURL: (URL) -> Bool
     private let fetchProxyURL: (URL) -> Result<DropInAppProxyResponse, Error>
+    private let handleServerAction: DropInAppServerActionHandler
     private let queue = DispatchQueue(label: "quakeos.dropin.loopback")
     private var listener: NWListener?
 
     init(store: DropInAppStore = .shared,
          openURL: @escaping (URL) -> Bool = DropInAppLoopbackServer.openExternally,
-         fetchProxyURL: @escaping (URL) -> Result<DropInAppProxyResponse, Error> = DropInAppLoopbackServer.fetchProxyURL) {
+         fetchProxyURL: @escaping (URL) -> Result<DropInAppProxyResponse, Error> = DropInAppLoopbackServer.fetchProxyURL,
+         handleServerAction: @escaping DropInAppServerActionHandler = { _ in nil }) {
         self.store = store
         self.openURL = openURL
         self.fetchProxyURL = fetchProxyURL
+        self.handleServerAction = handleServerAction
     }
 
     func start() {
@@ -153,6 +181,20 @@ final class DropInAppLoopbackServer: ObservableObject {
               let appID = Self.requestingAppID(request: request, port: port) else { return Self.response(status: 403) }
         guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
 
+        if let context = serverActionContext(app: app, request: apiRequest),
+           let result = handleServerAction(context) {
+            switch result {
+            case .success(let response):
+                return Self.response(status: response.status,
+                                     body: response.body,
+                                     contentType: response.contentType)
+            case .failure(let error):
+                return Self.response(status: 500,
+                                     body: Self.appAPIErrorBody(error.localizedDescription),
+                                     contentType: "application/json; charset=utf-8")
+            }
+        }
+
         switch apiRequest.action {
         case "open":
             guard let url = apiRequest.url else { return Self.response(status: 400) }
@@ -160,6 +202,19 @@ final class DropInAppLoopbackServer: ObservableObject {
         default:
             return Self.response(status: 404)
         }
+    }
+
+    private func serverActionContext(app: DropInAppRecord,
+                                     request: DropInAppAPIActionRequest) -> DropInAppServerActionContext? {
+        guard let serverPath = app.manifest.server,
+              let serverURL = DropInAppStore.containedURL(root: app.rootURL, relativePath: serverPath) else {
+            return nil
+        }
+        return DropInAppServerActionContext(app: app,
+                                            action: request.action,
+                                            query: request.query,
+                                            options: store.proxyConfigPayload(for: app)["options"] as? [String: Any] ?? [:],
+                                            serverModuleURL: serverURL)
     }
 
     private func appProxyConfigResponse(request: String) -> Data {
@@ -245,6 +300,7 @@ final class DropInAppLoopbackServer: ObservableObject {
         let action = String(components.path.dropFirst(prefix.count))
         guard action.range(of: #"^[a-z0-9][a-z0-9_-]*$"#, options: .regularExpression) != nil else { return nil }
         return DropInAppAPIActionRequest(action: action,
+                                         query: appAPIQueryValues(from: components.queryItems),
                                          url: appAPIURLValue(from: components.queryItems))
     }
 
@@ -280,6 +336,14 @@ final class DropInAppLoopbackServer: ObservableObject {
               (scheme == "http" || scheme == "https"),
               url.host != nil else { return nil }
         return url
+    }
+
+    private static func appAPIQueryValues(from queryItems: [URLQueryItem]?) -> [String: String] {
+        var values: [String: String] = [:]
+        for item in queryItems ?? [] {
+            values[item.name] = item.value ?? ""
+        }
+        return values
     }
 
     static func servedAppRequest(_ target: String) -> (appID: String, relativePath: String)? {
@@ -467,6 +531,11 @@ final class DropInAppLoopbackServer: ObservableObject {
         guard basePath != "/" else { return true }
         let baseWithoutSlash = String(basePath.dropLast())
         return target.path == baseWithoutSlash || target.path.hasPrefix(basePath)
+    }
+
+    private static func appAPIErrorBody(_ message: String) -> Data {
+        (try? JSONSerialization.data(withJSONObject: ["ok": false, "error": message],
+                                     options: [.sortedKeys])) ?? Data()
     }
 
     private static func privateHost(_ host: String) -> Bool {

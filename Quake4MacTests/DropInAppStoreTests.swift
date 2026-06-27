@@ -231,6 +231,7 @@ final class DropInAppStoreTests: XCTestCase {
         let request = try XCTUnwrap(DropInAppLoopbackServer.appAPIActionRequest(target))
 
         XCTAssertEqual(request.action, "open")
+        XCTAssertEqual(request.query["url"], "https://example.com/path?q=1")
         XCTAssertEqual(request.url?.absoluteString, "https://example.com/path?q=1")
         XCTAssertEqual(DropInAppLoopbackServer.appAPIActionRequest("/app-api/feed")?.action, "feed")
         XCTAssertNil(DropInAppLoopbackServer.appAPIActionRequest("/app-api/Bad"))
@@ -587,6 +588,137 @@ final class DropInAppStoreTests: XCTestCase {
         }.resume()
 
         wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerDispatchesServerActionWithContext() throws {
+        let root = temporaryDirectory()
+        let secretStore = MemoryDropInAppSecretStore()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"server":"server.js","options":[
+          {"key":"host","type":"text","default":"https://default.example"},
+          {"key":"enabled","type":"bool","default":false},
+          {"key":"token","type":"secret"},
+          {"key":"hostToken","type":"text","serverOnly":true}
+        ]}
+        """, extraFiles: ["server.js": ""])
+        let store = DropInAppStore(rootURL: root, secretStore: secretStore)
+        let app = try XCTUnwrap(store.app(id: "clock"))
+        for option in app.manifest.options {
+            switch option.key {
+            case "host":
+                store.setOptionValue(appID: app.id, option: option, value: "https://configured.example")
+            case "enabled":
+                store.setOptionValue(appID: app.id, option: option, value: "true")
+            case "token":
+                store.setOptionValue(appID: app.id, option: option, value: "secret-token")
+            case "hostToken":
+                store.setOptionValue(appID: app.id, option: option, value: "server-token")
+            default:
+                break
+            }
+        }
+        let recorder = ServerActionRecorder(response: try .json(["ok": true, "count": 2]))
+        let server = DropInAppLoopbackServer(store: store, handleServerAction: recorder.handle)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appAPIActionURL(port: port,
+                                                          action: "feed",
+                                                          queryItems: [
+                                                            URLQueryItem(name: "limit", value: "5"),
+                                                            URLQueryItem(name: "empty", value: nil)
+                                                          ]))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "server action response")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let json = (try? JSONSerialization.jsonObject(with: data ?? Data())) as? [String: Any]
+            XCTAssertEqual(json?["ok"] as? Bool, true)
+            XCTAssertEqual(json?["count"] as? Int, 2)
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+        let context = try XCTUnwrap(recorder.contexts.first)
+        XCTAssertEqual(context.app.id, "clock")
+        XCTAssertEqual(context.action, "feed")
+        XCTAssertEqual(context.query["limit"], "5")
+        XCTAssertEqual(context.query["empty"], "")
+        XCTAssertEqual(context.options["host"] as? String, "https://configured.example")
+        XCTAssertEqual(context.options["enabled"] as? Bool, true)
+        XCTAssertEqual(context.options["token"] as? String, "secret-token")
+        XCTAssertEqual(context.options["hostToken"] as? String, "server-token")
+        XCTAssertEqual(context.serverModuleURL.lastPathComponent, "server.js")
+    }
+
+    func testLoopbackServerDoesNotDispatchServerActionWithoutServerModule() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let recorder = ServerActionRecorder(response: try .json(["ok": true]))
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root),
+                                             handleServerAction: recorder.handle)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appAPIActionURL(port: port, action: "feed"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "missing server action response")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 404)
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+        XCTAssertTrue(recorder.contexts.isEmpty)
+    }
+
+    func testLoopbackServerReturnsJSONErrorWhenServerActionFails() throws {
+        struct TestServerActionError: LocalizedError {
+            var errorDescription: String? { "boom" }
+        }
+
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"server":"server.js"}
+        """, extraFiles: ["server.js": ""])
+        let recorder = ServerActionRecorder(error: TestServerActionError())
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root),
+                                             handleServerAction: recorder.handle)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appAPIActionURL(port: port, action: "feed"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "failed server action response")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 500)
+            XCTAssertEqual((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"),
+                           "application/json; charset=utf-8")
+            let json = (try? JSONSerialization.jsonObject(with: data ?? Data())) as? [String: Any]
+            XCTAssertEqual(json?["ok"] as? Bool, false)
+            XCTAssertEqual(json?["error"] as? String, "boom")
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+        XCTAssertEqual(recorder.contexts.map(\.action), ["feed"])
     }
 
     func testLoopbackServerRejectsActionStyleOpenWithoutRequestingAppReferer() throws {
@@ -1000,14 +1132,20 @@ final class DropInAppStoreTests: XCTestCase {
     }
 
     private func appAPIActionURL(port: UInt16, action: String, targetURL: String) throws -> URL {
+        try appAPIActionURL(port: port,
+                            action: action,
+                            queryItems: [URLQueryItem(name: "url", value: targetURL)])
+    }
+
+    private func appAPIActionURL(port: UInt16,
+                                 action: String,
+                                 queryItems: [URLQueryItem] = []) throws -> URL {
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"
         components.port = Int(port)
         components.path = "/app-api/\(action)"
-        components.queryItems = [
-            URLQueryItem(name: "url", value: targetURL)
-        ]
+        components.queryItems = queryItems.isEmpty ? nil : queryItems
         return try XCTUnwrap(components.url)
     }
 
@@ -1112,6 +1250,35 @@ private final class URLRecorder {
         recordedURLs.append(url)
         lock.unlock()
         return true
+    }
+}
+
+private final class ServerActionRecorder {
+    private let lock = NSLock()
+    private var recordedContexts: [DropInAppServerActionContext] = []
+    private let response: DropInAppServerActionResponse?
+    private let error: Error?
+
+    init(response: DropInAppServerActionResponse? = nil, error: Error? = nil) {
+        self.response = response
+        self.error = error
+    }
+
+    var contexts: [DropInAppServerActionContext] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedContexts
+    }
+
+    func handle(_ context: DropInAppServerActionContext) -> Result<DropInAppServerActionResponse, Error>? {
+        lock.lock()
+        recordedContexts.append(context)
+        lock.unlock()
+        if let error {
+            return .failure(error)
+        }
+        guard let response else { return nil }
+        return .success(response)
     }
 }
 
