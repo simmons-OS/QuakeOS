@@ -375,6 +375,7 @@ enum AppDest: Equatable {
     case panel(String)         // a built-in panel: "clock" | "music" | "monitor"
     case builtin(String)       // an on-device app: "settings" | "wallpaper" | "browser" (stubs for now)
     case dashboard(UUID)       // saved authenticated web dashboard
+    case dropInApp(String)     // user-installed static drop-in panel app, by manifest id
 }
 
 struct Tile: Identifiable {
@@ -543,7 +544,7 @@ final class PadModel: ObservableObject {
         case .panel(let id):
             let ex: Extra = id == "monitor" ? .monitor : id == "music" ? .music : id == "weather" ? .weather : .clock
             if let k = extras.firstIndex(of: ex) { pageIndex = pages.count + k }
-        case .builtin, .dashboard:
+        case .builtin, .dashboard, .dropInApp:
             break
         }
         currentDest = dest

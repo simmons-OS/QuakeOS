@@ -66,6 +66,8 @@ struct ContentView: View {
             SettingsAppView(input: state.input).ignoresSafeArea()
         } else if case .dashboard(let id)? = pad.currentDest {
             DashboardScreenView(dashboardID: id).ignoresSafeArea()
+        } else if case .dropInApp(let id)? = pad.currentDest {
+            DropInStaticAppScreenView(appID: id).ignoresSafeArea()
         } else if case .builtin(let b)? = pad.currentDest {
             HomeBuiltinView(title: b.capitalized).ignoresSafeArea()
         } else {
