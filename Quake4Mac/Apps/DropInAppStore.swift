@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 struct DropInAppOption: Decodable, Equatable, Identifiable {
     var id: String { key }
@@ -137,6 +138,92 @@ enum DropInAppExportError: LocalizedError, Equatable {
     }
 }
 
+protocol DropInAppSecretStoring {
+    func set(_ value: String, appID: String, field: String) throws
+    func get(appID: String, field: String) throws -> String?
+    func delete(appID: String, field: String) throws
+    func deleteAll(appID: String) throws
+}
+
+enum DropInAppSecretError: LocalizedError, Equatable {
+    case unexpectedStatus(OSStatus)
+    case invalidData
+
+    var errorDescription: String? {
+        switch self {
+        case .unexpectedStatus(let status): return "Keychain returned status \(status)."
+        case .invalidData: return "Stored drop-in app secret was not valid text."
+        }
+    }
+}
+
+final class DropInAppSecretStore: DropInAppSecretStoring {
+    static let shared = DropInAppSecretStore()
+
+    private let service = "com.quake4mac.dropin-app"
+
+    private init() {}
+
+    func set(_ value: String, appID: String, field: String) throws {
+        let data = Data(value.utf8)
+        let query = baseQuery(account: accountKey(appID: appID, field: field))
+        SecItemDelete(query as CFDictionary)
+
+        var add = query
+        add[kSecValueData as String] = data
+        add[kSecAttrGeneric as String] = appID
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        let status = SecItemAdd(add as CFDictionary, nil)
+        guard status == errSecSuccess else { throw DropInAppSecretError.unexpectedStatus(status) }
+    }
+
+    func get(appID: String, field: String) throws -> String? {
+        var query = baseQuery(account: accountKey(appID: appID, field: field))
+        query[kSecReturnData as String] = kCFBooleanTrue
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess else { throw DropInAppSecretError.unexpectedStatus(status) }
+        guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
+            throw DropInAppSecretError.invalidData
+        }
+        return value
+    }
+
+    func delete(appID: String, field: String) throws {
+        let status = SecItemDelete(baseQuery(account: accountKey(appID: appID, field: field)) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw DropInAppSecretError.unexpectedStatus(status)
+        }
+    }
+
+    func deleteAll(appID: String) throws {
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service
+        ]
+        query[kSecAttrGeneric as String] = appID
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw DropInAppSecretError.unexpectedStatus(status)
+        }
+    }
+
+    private func baseQuery(account: String) -> [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+    }
+
+    private func accountKey(appID: String, field: String) -> String {
+        "\(appID):\(field)"
+    }
+}
+
 final class DropInAppStore: ObservableObject {
     static let shared = DropInAppStore()
 
@@ -147,6 +234,7 @@ final class DropInAppStore: ObservableObject {
     let rootURL: URL
     private let fileManager: FileManager
     private let defaults: UserDefaults
+    private let secretStore: DropInAppSecretStoring
     private static let optionValuesKey = "dropInApps.optionValues"
     private static let riskyHostCodeExtensions: Set<String> = [
         "exe", "dll", "com", "scr", "msi", "bat", "cmd", "ps1", "psm1", "vbs", "vbe",
@@ -155,10 +243,12 @@ final class DropInAppStore: ObservableObject {
 
     init(rootURL: URL = DropInAppStore.defaultAppsDirectory(),
          fileManager: FileManager = .default,
-         defaults: UserDefaults = .standard) {
+         defaults: UserDefaults = .standard,
+         secretStore: DropInAppSecretStoring = DropInAppSecretStore.shared) {
         self.rootURL = rootURL
         self.fileManager = fileManager
         self.defaults = defaults
+        self.secretStore = secretStore
         optionValuesByAppID = defaults.dictionary(forKey: Self.optionValuesKey) as? [String: [String: String]] ?? [:]
         refresh()
     }
@@ -202,7 +292,10 @@ final class DropInAppStore: ObservableObject {
     }
 
     func optionValue(appID: String, option: DropInAppOption) -> String {
-        optionValuesByAppID[appID]?[option.key] ?? option.defaultValue ?? ""
+        guard Self.isClientOption(option) else {
+            return (try? secretStore.get(appID: appID, field: option.key)) ?? option.defaultValue ?? ""
+        }
+        return optionValuesByAppID[appID]?[option.key] ?? option.defaultValue ?? ""
     }
 
     func setOptionValue(appID: String, optionKey: String, value: String) {
@@ -212,10 +305,20 @@ final class DropInAppStore: ObservableObject {
         saveOptionValues()
     }
 
+    func setOptionValue(appID: String, option: DropInAppOption, value: String) {
+        guard Self.isClientOption(option) else {
+            try? secretStore.set(value, appID: appID, field: option.key)
+            objectWillChange.send()
+            return
+        }
+        setOptionValue(appID: appID, optionKey: option.key, value: value)
+    }
+
     func resetOptionValues(appID: String) {
         var next = optionValuesByAppID
         next[appID] = nil
         optionValuesByAppID = next
+        try? secretStore.deleteAll(appID: appID)
         saveOptionValues()
     }
 
@@ -306,6 +409,7 @@ final class DropInAppStore: ObservableObject {
         var next = optionValuesByAppID
         next[id] = nil
         optionValuesByAppID = next
+        try? secretStore.deleteAll(appID: id)
         saveOptionValues()
         refresh()
         return .success(())
@@ -418,7 +522,7 @@ final class DropInAppStore: ObservableObject {
         return resolved
     }
 
-    private static func isClientOption(_ option: DropInAppOption) -> Bool {
+    static func isClientOption(_ option: DropInAppOption) -> Bool {
         option.type != "secret" && !option.serverOnly
     }
 
