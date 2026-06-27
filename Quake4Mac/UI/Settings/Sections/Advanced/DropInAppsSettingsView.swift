@@ -5,6 +5,7 @@ struct DropInAppsSettingsView: View {
     @ObservedObject private var store = DropInAppStore.shared
     @State private var importMessage = ""
     @State private var importError = ""
+    @State private var pendingHostCodeImport: PendingHostCodeImport?
     @State private var pendingRemoval: DropInAppRecord?
 
     var body: some View {
@@ -26,6 +27,14 @@ struct DropInAppsSettingsView: View {
             Button("Cancel", role: .cancel) { pendingRemoval = nil }
         } message: {
             Text("This deletes the imported app folder from QuakeOS. It does not affect the source folder you imported from.")
+        }
+        .confirmationDialog("Import Host-Code App?",
+                            isPresented: hostCodeImportDialogPresented,
+                            titleVisibility: .visible) {
+            Button("Import", role: .destructive) { confirmHostCodeImport() }
+            Button("Cancel", role: .cancel) { pendingHostCodeImport = nil }
+        } message: {
+            Text("This drop-in app contains host-side code. Only import it if you trust the source.")
         }
     }
 
@@ -224,10 +233,19 @@ struct DropInAppsSettingsView: View {
         panel.canCreateDirectories = false
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        switch store.importFolder(at: url) {
+        importFolder(url, allowHostCode: false)
+    }
+
+    private func importFolder(_ url: URL, allowHostCode: Bool) {
+        switch store.importFolder(at: url, allowHostCode: allowHostCode) {
         case .success(let app):
             importError = ""
             importMessage = "Imported \(app.manifest.name)."
+            pendingHostCodeImport = nil
+        case .failure(.requiresHostCodeConfirmation(let name)):
+            importMessage = ""
+            importError = "\"\(name)\" needs confirmation before import."
+            pendingHostCodeImport = PendingHostCodeImport(url: url)
         case .failure(let error):
             importMessage = ""
             importError = error.errorDescription ?? "Import failed."
@@ -237,6 +255,16 @@ struct DropInAppsSettingsView: View {
     private var removalDialogPresented: Binding<Bool> {
         Binding(get: { pendingRemoval != nil },
                 set: { if !$0 { pendingRemoval = nil } })
+    }
+
+    private var hostCodeImportDialogPresented: Binding<Bool> {
+        Binding(get: { pendingHostCodeImport != nil },
+                set: { if !$0 { pendingHostCodeImport = nil } })
+    }
+
+    private func confirmHostCodeImport() {
+        guard let pending = pendingHostCodeImport else { return }
+        importFolder(pending.url, allowHostCode: true)
     }
 
     private func removePendingApp() {
@@ -251,4 +279,8 @@ struct DropInAppsSettingsView: View {
             importError = error.errorDescription ?? "Remove failed."
         }
     }
+}
+
+private struct PendingHostCodeImport {
+    let url: URL
 }
