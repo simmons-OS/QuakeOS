@@ -56,6 +56,14 @@ final class MacroActionTests: XCTestCase {
         }
     }
 
+    func testMacroStepMapsOpenSettingsToSystemAction() {
+        let step = MacroStep(kind: .openSettings, value: "", intValue: 0)
+
+        guard case .system(.openSettings)? = step.padAction else {
+            return XCTFail("Expected open settings system action")
+        }
+    }
+
     func testMacroStepMapsPasteTextToPadAction() {
         let step = MacroStep(kind: .pasteText, value: "Status update", intValue: 0)
 
@@ -91,12 +99,17 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(MacroText.escapedAppleScriptString("a \"quote\" \\ path"), "a \\\"quote\\\" \\\\ path")
     }
 
-    func testLockScreenSystemActionUsesMacShortcut() {
-        let source = SystemAction.lockScreen.appleScriptSource
+    func testLockScreenSystemActionUsesMacShortcut() throws {
+        let source = try XCTUnwrap(SystemAction.lockScreen.appleScriptSource)
 
         XCTAssertTrue(source.contains("control down"))
         XCTAssertTrue(source.contains("command down"))
         XCTAssertTrue(source.contains("keystroke \"q\""))
+    }
+
+    func testOpenSettingsSystemActionMatchesOpenQuakeConfigValue() {
+        XCTAssertEqual(SystemAction.openSettings.rawValue, "config")
+        XCTAssertEqual(SystemAction.openSettings.title, "Open Settings")
     }
 }
 
@@ -109,6 +122,25 @@ final class TileSpecActionTests: XCTestCase {
 
         guard case .system(.lockScreen) = decoded.action else {
             return XCTFail("Expected lock screen system action")
+        }
+    }
+
+    func testOpenSettingsSystemActionRoundTripsThroughTileSpecJSON() throws {
+        let spec = TileSpec(title: "Settings", symbol: "gearshape.fill", tint: .gray,
+                            category: "System", action: .system(.openSettings))
+        let data = try JSONEncoder().encode(spec)
+        let decoded = try JSONDecoder().decode(TileSpec.self, from: data)
+
+        guard case .system(.openSettings) = decoded.action else {
+            return XCTFail("Expected open settings system action")
+        }
+    }
+
+    func testTileCatalogIncludesQuakeOSSettingsAction() throws {
+        let spec = try XCTUnwrap(TileCatalog.all.first { $0.title == "QuakeOS Settings" })
+
+        guard case .system(.openSettings) = spec.action else {
+            return XCTFail("Expected open settings catalog action")
         }
     }
 

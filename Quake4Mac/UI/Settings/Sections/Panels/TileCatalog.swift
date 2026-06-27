@@ -103,6 +103,7 @@ enum TileCatalog {
         for page in PadModel.defaultPages() {
             for t in page.tiles where !t.title.isEmpty { out.append(TileSpec(from: t, category: page.name)) }
         }
+        out += systemActions
         // (2) Per-app Discord set.
         out += discord
         // (3) Every other shipped glyph as a ready-to-assign macro tile (deduped by image).
@@ -113,6 +114,11 @@ enum TileCatalog {
         }
         return out
     }
+
+    private static let systemActions: [TileSpec] = [
+        TileSpec(title: "QuakeOS Settings", symbol: "gearshape.fill", image: "control_panel",
+                 tint: .gray, category: "System", action: .system(.openSettings))
+    ]
 
     private static let discord: [TileSpec] = [
         TileSpec(title: "Mute",         symbol: "mic.slash.fill",        image: "dc_mute_off",            tint: .indigo, category: "Discord", app: "Discord"),
