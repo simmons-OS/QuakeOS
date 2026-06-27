@@ -54,6 +54,7 @@ struct TileSpec: Codable, Identifiable, Hashable {
         case .openPage(let n):    actKind = "page";    actStr = n
         case .keyCombo(let k):    actKind = "key";     actStr = k
         case .typeText(let t):    actKind = "text";    actStr = t
+        case .pasteText(let t):   actKind = "paste";   actStr = t
         case .macro(let steps):   actKind = "macro";   actSteps = steps
         case .none:               actKind = "none"
         }
@@ -71,6 +72,7 @@ struct TileSpec: Codable, Identifiable, Hashable {
         case "page":    return .openPage(actStr ?? "")
         case "key":     return .keyCombo(actStr ?? "")
         case "text":    return .typeText(actStr ?? "")
+        case "paste":   return .pasteText(actStr ?? "")
         case "macro":   return .macro(actSteps ?? [])
         default:        return .none
         }

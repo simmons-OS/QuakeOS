@@ -23,6 +23,7 @@ enum PadAction {
     case openPage(String)              // jump to another Quake page (by name)
     case keyCombo(String)              // send a key combo to the focused app via System Events
     case typeText(String)              // type literal text into the focused app
+    case pasteText(String)             // place text on the clipboard and paste it
     case macro([MacroStep])            // run ordered macro steps without overlap
     case none
 }
@@ -204,6 +205,7 @@ enum TileIconCache {
 enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case key
     case text
+    case pasteText
     case delay
     case app
     case url
@@ -220,6 +222,7 @@ enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
         switch self {
         case .key: return "Keystroke"
         case .text: return "Type Text"
+        case .pasteText: return "Paste Text"
         case .delay: return "Delay"
         case .app: return "Open App"
         case .url: return "Open URL"
@@ -277,6 +280,7 @@ struct MacroStep: Identifiable, Codable, Hashable {
         switch kind {
         case .key: return .keyCombo(value)
         case .text: return .typeText(value)
+        case .pasteText: return .pasteText(value)
         case .delay: return nil
         case .app: return .launchApp(bundleID: value)
         case .url: return .openURL(value)
@@ -733,6 +737,8 @@ final class PadModel: ObservableObject {
             if let source = MacroKeyCombo.appleScriptSource(for: combo) { runAppleScript(source) }
         case .typeText(let text):
             runAppleScript(MacroText.appleScriptSource(for: text))
+        case .pasteText(let text):
+            pasteText(text)
         case .macro(let steps):
             runMacro(steps)
         case .none:
@@ -743,6 +749,14 @@ final class PadModel: ObservableObject {
     private func runAppleScript(_ source: String) {
         var err: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&err)
+    }
+
+    private func pasteText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        if let source = MacroKeyCombo.appleScriptSource(for: "command+v") {
+            runAppleScript(source)
+        }
     }
 
     private func runMacro(_ steps: [MacroStep]) {
@@ -917,6 +931,7 @@ private struct ActionDTO: Codable {
         case .openPage(let n):    kind = "page";    s = n
         case .keyCombo(let k):    kind = "key";     s = k
         case .typeText(let t):    kind = "text";    s = t
+        case .pasteText(let t):   kind = "paste";   s = t
         case .macro(let m):       kind = "macro";   steps = m
         case .none:               kind = "none"
         }
@@ -933,6 +948,7 @@ private struct ActionDTO: Codable {
         case "page":    return .openPage(s ?? "")
         case "key":     return .keyCombo(s ?? "")
         case "text":    return .typeText(s ?? "")
+        case "paste":   return .pasteText(s ?? "")
         case "macro":   return .macro(steps ?? [])
         default:        return .none
         }
