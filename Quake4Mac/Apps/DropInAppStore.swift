@@ -363,18 +363,25 @@ final class DropInAppStore: ObservableObject {
         saveOptionValues()
     }
 
-    func importFolder(at sourceURL: URL, allowHostCode: Bool = false) -> Result<DropInAppRecord, DropInAppImportError> {
+    func importFolder(at sourceURL: URL,
+                      allowHostCode: Bool = false,
+                      forceID: String? = nil) -> Result<DropInAppRecord, DropInAppImportError> {
+        if let forceID, !Self.isValidAppID(forceID) {
+            return .failure(.invalidSource("Invalid app id \"\(forceID)\"."))
+        }
+
         let source = sourceURL.standardizedFileURL
         switch scan(folder: source) {
         case .failure(let message):
             return .failure(.invalidSource(message))
         case .success(let record):
+            let importID = forceID ?? record.id
             refresh()
-            guard !apps.contains(where: { $0.id == record.id }) else {
-                return .failure(.duplicateID(record.id))
+            guard !apps.contains(where: { $0.id == importID }) else {
+                return .failure(.duplicateID(importID))
             }
 
-            let destination = rootURL.appendingPathComponent(record.id, isDirectory: true)
+            let destination = rootURL.appendingPathComponent(importID, isDirectory: true)
             guard !fileManager.fileExists(atPath: destination.path) else {
                 return .failure(.destinationExists(destination.lastPathComponent))
             }
@@ -385,19 +392,26 @@ final class DropInAppStore: ObservableObject {
             do {
                 try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
                 try fileManager.copyItem(at: source, to: destination)
+                if importID != record.id {
+                    try rewriteManifestID(at: destination.appendingPathComponent(record.manifestURL.lastPathComponent),
+                                          id: importID)
+                }
             } catch {
+                try? fileManager.removeItem(at: destination)
                 return .failure(.copyFailed(error.localizedDescription))
             }
 
             refresh()
-            if let imported = app(id: record.id) {
+            if let imported = app(id: importID) {
                 return .success(imported)
             }
             return .failure(.invalidSource("Imported app could not be scanned."))
         }
     }
 
-    func importArchive(at archiveURL: URL, allowHostCode: Bool = false) -> Result<DropInAppRecord, DropInAppImportError> {
+    func importArchive(at archiveURL: URL,
+                       allowHostCode: Bool = false,
+                       forceID: String? = nil) -> Result<DropInAppRecord, DropInAppImportError> {
         let tempRoot = fileManager.temporaryDirectory
             .appendingPathComponent("QuakeOSDropInImport-\(UUID().uuidString)", isDirectory: true)
         do {
@@ -413,7 +427,7 @@ final class DropInAppStore: ObservableObject {
         guard let appRoot = archiveAppRoot(in: tempRoot) else {
             return .failure(.invalidSource("Archive does not contain a valid drop-in app."))
         }
-        return importFolder(at: appRoot, allowHostCode: allowHostCode)
+        return importFolder(at: appRoot, allowHostCode: allowHostCode, forceID: forceID)
     }
 
     func exportArchive(appID: String, to destinationURL: URL) -> Result<Void, DropInAppExportError> {
@@ -605,6 +619,17 @@ final class DropInAppStore: ObservableObject {
 
     private func saveOptionValues() {
         defaults.set(optionValuesByAppID, forKey: Self.optionValuesKey)
+    }
+
+    private func rewriteManifestID(at manifestURL: URL, id: String) throws {
+        let data = try Data(contentsOf: manifestURL)
+        let object = try JSONSerialization.jsonObject(with: data)
+        guard var manifest = object as? [String: Any] else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        manifest["id"] = id
+        let rewritten = try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+        try rewritten.write(to: manifestURL, options: .atomic)
     }
 
     private func scan(folder: URL) -> ScanResult {
