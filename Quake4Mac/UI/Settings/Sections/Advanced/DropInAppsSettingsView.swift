@@ -82,37 +82,85 @@ struct DropInAppsSettingsView: View {
     }
 
     private func appRow(_ app: DropInAppRecord) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: app.manifest.served ? "network" : "doc.richtext")
-                .frame(width: 24)
-                .foregroundColor(app.hasHostCode ? NeonTheme.magenta : NeonTheme.cyan)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(app.manifest.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(NeonTheme.textPrimary)
-                    Text(app.manifest.id)
-                        .font(.system(size: 10).monospaced())
+        let options = DropInAppStore.clientOptions(app.manifest.options)
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Image(systemName: app.manifest.served ? "network" : "doc.richtext")
+                    .frame(width: 24)
+                    .foregroundColor(app.hasHostCode ? NeonTheme.magenta : NeonTheme.cyan)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(app.manifest.name)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(NeonTheme.textPrimary)
+                        Text(app.manifest.id)
+                            .font(.system(size: 10).monospaced())
+                            .foregroundColor(NeonTheme.textTertiary)
+                    }
+                    Text("\(app.manifest.served ? "Served" : "Static") · \(app.manifest.entry)")
+                        .font(.system(size: 11))
                         .foregroundColor(NeonTheme.textTertiary)
+                        .lineLimit(1)
                 }
-                Text("\(app.manifest.served ? "Served" : "Static") · \(app.manifest.entry)")
-                    .font(.system(size: 11))
-                    .foregroundColor(NeonTheme.textTertiary)
-                    .lineLimit(1)
+                Spacer()
+                if app.hasHostCode {
+                    Text("HOST CODE")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundColor(NeonTheme.magenta)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(NeonTheme.magenta.opacity(0.12)))
+                }
+                if !options.isEmpty {
+                    Button { store.resetOptionValues(appID: app.id) } label: {
+                        Image(systemName: "arrow.counterclockwise")
+                    }
+                    .buttonStyle(.bordered)
+                    .help("Reset options")
+                }
             }
-            Spacer()
-            if app.hasHostCode {
-                Text("HOST CODE")
-                    .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(NeonTheme.magenta)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(NeonTheme.magenta.opacity(0.12)))
+
+            if !options.isEmpty {
+                optionEditor(app: app, options: options)
             }
         }
         .padding(10)
         .background(Color.white.opacity(0.04))
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private func optionEditor(app: DropInAppRecord, options: [DropInAppOption]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(options) { option in
+                if isBooleanOption(option) {
+                    Toggle(option.label, isOn: Binding(
+                        get: { store.optionValue(appID: app.id, option: option) == "true" },
+                        set: { store.setOptionValue(appID: app.id, optionKey: option.key, value: $0 ? "true" : "false") }
+                    ))
+                    .toggleStyle(.switch)
+                    .font(.system(size: 11))
+                    .foregroundColor(NeonTheme.textSecondary)
+                } else {
+                    HStack(spacing: 8) {
+                        Text(option.label)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(NeonTheme.textSecondary)
+                            .frame(width: 96, alignment: .leading)
+                        TextField(option.key, text: Binding(
+                            get: { store.optionValue(appID: app.id, option: option) },
+                            set: { store.setOptionValue(appID: app.id, optionKey: option.key, value: $0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                    }
+                }
+            }
+        }
+        .padding(.leading, 36)
+    }
+
+    private func isBooleanOption(_ option: DropInAppOption) -> Bool {
+        option.type == "bool" || option.type == "boolean"
     }
 
     private var issueList: some View {
