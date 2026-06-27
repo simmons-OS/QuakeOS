@@ -131,6 +131,17 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertNil(DropInAppLoopbackServer.appConfigAppID("/apps/clock/index.html"))
     }
 
+    func testLoopbackServerParsesAppOpenRequests() throws {
+        let target = "/app-api/open?app=clock&url=https%3A%2F%2Fexample.com%2Fpath%3Fq%3D1"
+        let request = try XCTUnwrap(DropInAppLoopbackServer.appOpenRequest(target))
+
+        XCTAssertEqual(request.appID, "clock")
+        XCTAssertEqual(request.url.absoluteString, "https://example.com/path?q=1")
+        XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-api/open?app=Bad&url=https%3A%2F%2Fexample.com"))
+        XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-api/open?app=clock&url=file%3A%2F%2F%2Ftmp%2Fsecret"))
+        XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-config?app=clock"))
+    }
+
     func testLoopbackHostCheckRequiresCurrentLoopbackPort() {
         let good = "GET /apps/clock/index.html HTTP/1.1\r\nHost: 127.0.0.1:49152\r\n\r\n"
         let local = "GET /apps/clock/index.html HTTP/1.1\r\nHost: localhost:49152\r\n\r\n"
@@ -233,6 +244,89 @@ final class DropInAppStoreTests: XCTestCase {
         URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:\(port)/app-config?app=clock")!) { _, response, error in
             XCTAssertNil(error)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerOpensSameOriginHTTPURL() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let recorder = URLRecorder()
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root), openURL: recorder.open)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appOpenURL(port: port,
+                                                     appID: "clock",
+                                                     targetURL: "https://example.com/path?q=1"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        let done = expectation(description: "app open response")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
+            XCTAssertEqual(recorder.urls.map(\.absoluteString), ["https://example.com/path?q=1"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsCrossOriginAppOpen() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let recorder = URLRecorder()
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root), openURL: recorder.open)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appOpenURL(port: port,
+                                                     appID: "clock",
+                                                     targetURL: "https://example.com"))
+        request.httpMethod = "POST"
+        let done = expectation(description: "app open rejection")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
+            XCTAssertTrue(recorder.urls.isEmpty)
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsStaticAppOpen() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":false}
+        """)
+        let recorder = URLRecorder()
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root), openURL: recorder.open)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appOpenURL(port: port,
+                                                     appID: "clock",
+                                                     targetURL: "https://example.com"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        let done = expectation(description: "static app open rejection")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 404)
+            XCTAssertTrue(recorder.urls.isEmpty)
             done.fulfill()
         }.resume()
 
@@ -516,6 +610,19 @@ final class DropInAppStoreTests: XCTestCase {
         return try XCTUnwrap(server.port)
     }
 
+    private func appOpenURL(port: UInt16, appID: String, targetURL: String) throws -> URL {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = Int(port)
+        components.path = "/app-api/open"
+        components.queryItems = [
+            URLQueryItem(name: "app", value: appID),
+            URLQueryItem(name: "url", value: targetURL)
+        ]
+        return try XCTUnwrap(components.url)
+    }
+
     private func writeApp(root: URL, folder: String, manifest: String, extraFiles: [String: String] = [:]) throws {
         let app = root.appendingPathComponent(folder, isDirectory: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
@@ -555,5 +662,23 @@ final class DropInAppStoreTests: XCTestCase {
             let message = String(data: data, encoding: .utf8) ?? "ditto failed"
             throw NSError(domain: "DropInAppStoreTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
         }
+    }
+}
+
+private final class URLRecorder {
+    private let lock = NSLock()
+    private var recordedURLs: [URL] = []
+
+    var urls: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedURLs
+    }
+
+    func open(_ url: URL) -> Bool {
+        lock.lock()
+        recordedURLs.append(url)
+        lock.unlock()
+        return true
     }
 }
