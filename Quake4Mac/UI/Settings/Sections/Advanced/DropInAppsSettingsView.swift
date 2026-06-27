@@ -5,7 +5,9 @@ struct DropInAppsSettingsView: View {
     @ObservedObject private var store = DropInAppStore.shared
     @State private var importMessage = ""
     @State private var importError = ""
-    @State private var pendingHostCodeImport: PendingHostCodeImport?
+    @State private var pendingHostCodeImport: PendingDropInImport?
+    @State private var pendingDuplicateImport: PendingDuplicateImport?
+    @State private var duplicateImportID = ""
     @State private var pendingRemoval: DropInAppRecord?
 
     var body: some View {
@@ -38,6 +40,9 @@ struct DropInAppsSettingsView: View {
             Button("Cancel", role: .cancel) { pendingHostCodeImport = nil }
         } message: {
             Text("This drop-in app contains host-side code. Only import it if you trust the source.")
+        }
+        .sheet(item: $pendingDuplicateImport) { pending in
+            duplicateImportSheet(pending)
         }
     }
 
@@ -317,27 +322,34 @@ struct DropInAppsSettingsView: View {
         importArchive(url, allowHostCode: false)
     }
 
-    private func importFolder(_ url: URL, allowHostCode: Bool) {
-        handleImportResult(store.importFolder(at: url, allowHostCode: allowHostCode),
-                           source: PendingHostCodeImport(url: url, isArchive: false))
+    private func importFolder(_ url: URL, allowHostCode: Bool, forceID: String? = nil) {
+        handleImportResult(store.importFolder(at: url, allowHostCode: allowHostCode, forceID: forceID),
+                           source: PendingDropInImport(url: url, isArchive: false, forceID: forceID))
     }
 
-    private func importArchive(_ url: URL, allowHostCode: Bool) {
-        handleImportResult(store.importArchive(at: url, allowHostCode: allowHostCode),
-                           source: PendingHostCodeImport(url: url, isArchive: true))
+    private func importArchive(_ url: URL, allowHostCode: Bool, forceID: String? = nil) {
+        handleImportResult(store.importArchive(at: url, allowHostCode: allowHostCode, forceID: forceID),
+                           source: PendingDropInImport(url: url, isArchive: true, forceID: forceID))
     }
 
     private func handleImportResult(_ result: Result<DropInAppRecord, DropInAppImportError>,
-                                    source: PendingHostCodeImport) {
+                                    source: PendingDropInImport) {
         switch result {
         case .success(let app):
             importError = ""
             importMessage = "Imported \(app.manifest.name)."
             pendingHostCodeImport = nil
+            pendingDuplicateImport = nil
         case .failure(.requiresHostCodeConfirmation(let name)):
             importMessage = ""
             importError = "\"\(name)\" needs confirmation before import."
             pendingHostCodeImport = source
+            pendingDuplicateImport = nil
+        case .failure(.duplicateID(let id)):
+            importMessage = ""
+            importError = "An app with id \"\(id)\" is already installed."
+            duplicateImportID = suggestedImportID(for: id)
+            pendingDuplicateImport = PendingDuplicateImport(source: source, conflictingID: id)
         case .failure(let error):
             importMessage = ""
             importError = error.errorDescription ?? "Import failed."
@@ -372,13 +384,90 @@ struct DropInAppsSettingsView: View {
                 set: { if !$0 { pendingHostCodeImport = nil } })
     }
 
+    private var duplicateImportValidationMessage: String? {
+        let candidate = normalizedDuplicateImportID
+        if candidate.isEmpty { return "Enter a new app id." }
+        if !DropInAppStore.isValidAppID(candidate) {
+            return "Use lowercase letters, numbers, hyphens, or underscores. Start with a letter or number."
+        }
+        if store.apps.contains(where: { $0.id == candidate }) {
+            return "That app id is already installed."
+        }
+        return nil
+    }
+
+    private var normalizedDuplicateImportID: String {
+        duplicateImportID.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func duplicateImportSheet(_ pending: PendingDuplicateImport) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Rename Imported App")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(NeonTheme.textPrimary)
+                Text("An app with id \"\(pending.conflictingID)\" is already installed.")
+                    .font(.system(size: 12))
+                    .foregroundColor(NeonTheme.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("New App ID")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(NeonTheme.textSecondary)
+                TextField("clock-copy", text: $duplicateImportID)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(size: 12).monospaced())
+                if let message = duplicateImportValidationMessage {
+                    Text(message)
+                        .font(.system(size: 11))
+                        .foregroundColor(NeonTheme.magenta)
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { pendingDuplicateImport = nil }
+                Button("Import") { confirmDuplicateImport() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(duplicateImportValidationMessage != nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 380)
+        .background(NeonTheme.bg)
+    }
+
     private func confirmHostCodeImport() {
         guard let pending = pendingHostCodeImport else { return }
         if pending.isArchive {
-            importArchive(pending.url, allowHostCode: true)
+            importArchive(pending.url, allowHostCode: true, forceID: pending.forceID)
         } else {
-            importFolder(pending.url, allowHostCode: true)
+            importFolder(pending.url, allowHostCode: true, forceID: pending.forceID)
         }
+    }
+
+    private func confirmDuplicateImport() {
+        guard let pending = pendingDuplicateImport,
+              duplicateImportValidationMessage == nil else { return }
+        let importID = normalizedDuplicateImportID
+        let source = pending.source.withForceID(importID)
+        if source.isArchive {
+            importArchive(source.url, allowHostCode: false, forceID: source.forceID)
+        } else {
+            importFolder(source.url, allowHostCode: false, forceID: source.forceID)
+        }
+    }
+
+    private func suggestedImportID(for id: String) -> String {
+        let installedIDs = Set(store.apps.map(\.id))
+        let base = "\(id)-copy"
+        if !installedIDs.contains(base) { return base }
+        var suffix = 2
+        while installedIDs.contains("\(base)-\(suffix)") {
+            suffix += 1
+        }
+        return "\(base)-\(suffix)"
     }
 
     private func removePendingApp() {
@@ -395,7 +484,18 @@ struct DropInAppsSettingsView: View {
     }
 }
 
-private struct PendingHostCodeImport {
+private struct PendingDropInImport {
     let url: URL
     let isArchive: Bool
+    let forceID: String?
+
+    func withForceID(_ id: String) -> PendingDropInImport {
+        PendingDropInImport(url: url, isArchive: isArchive, forceID: id)
+    }
+}
+
+private struct PendingDuplicateImport: Identifiable {
+    let id = UUID()
+    let source: PendingDropInImport
+    let conflictingID: String
 }
