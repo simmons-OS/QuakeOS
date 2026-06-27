@@ -1011,6 +1011,46 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(store.apps.map(\.id), ["clock"])
     }
 
+    func testImportFolderCanForceIDForDuplicateApp() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "installed", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """)
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "source", manifest: """
+        {"id":"clock","name":"Clock","entry":"index.html"}
+        """, extraFiles: ["assets/style.css": "body{}"])
+        let source = sourceRoot.appendingPathComponent("source", isDirectory: true)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importFolder(at: source, forceID: "clock-copy")
+
+        guard case .success(let app) = result else {
+            return XCTFail("Expected forced-ID import")
+        }
+        XCTAssertEqual(app.id, "clock-copy")
+        XCTAssertEqual(store.apps.map(\.id), ["clock-copy", "clock"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock-copy/assets/style.css").path))
+        XCTAssertEqual(try readManifestID(at: root.appendingPathComponent("clock-copy/app.json")), "clock-copy")
+        XCTAssertEqual(try readManifestID(at: source.appendingPathComponent("app.json")), "clock")
+    }
+
+    func testImportFolderRejectsInvalidForcedID() throws {
+        let root = temporaryDirectory()
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "source", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importFolder(at: sourceRoot.appendingPathComponent("source", isDirectory: true),
+                                        forceID: "Bad App")
+
+        XCTAssertEqual(result, .failure(.invalidSource("Invalid app id \"Bad App\".")))
+        XCTAssertTrue(store.apps.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("Bad App").path))
+    }
+
     func testImportFolderRejectsInvalidSource() throws {
         let root = temporaryDirectory()
         let source = temporaryDirectory()
@@ -1087,6 +1127,30 @@ final class DropInAppStoreTests: XCTestCase {
             return XCTFail("Expected successful flat archive import")
         }
         XCTAssertEqual(app.id, "flat")
+    }
+
+    func testImportArchiveCanForceIDForDuplicateApp() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "installed", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """)
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "Clock Source", manifest: """
+        {"id":"clock","name":"Clock","entry":"index.html"}
+        """)
+        let archive = temporaryDirectory().appendingPathExtension("zip")
+        try createZip(from: sourceRoot.appendingPathComponent("Clock Source", isDirectory: true),
+                      to: archive,
+                      keepParent: true)
+        let store = DropInAppStore(rootURL: root)
+
+        let result = store.importArchive(at: archive, forceID: "clock-copy")
+
+        guard case .success(let app) = result else {
+            return XCTFail("Expected forced-ID archive import")
+        }
+        XCTAssertEqual(app.id, "clock-copy")
+        XCTAssertEqual(try readManifestID(at: root.appendingPathComponent("clock-copy/app.json")), "clock-copy")
     }
 
     func testImportArchiveRequiresConfirmationForHostCode() throws {
@@ -1315,6 +1379,12 @@ final class DropInAppStoreTests: XCTestCase {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try Data(content.utf8).write(to: url)
         }
+    }
+
+    private func readManifestID(at url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+        return manifest.id
     }
 
     private func createZip(from source: URL, to destination: URL, keepParent: Bool) throws {
