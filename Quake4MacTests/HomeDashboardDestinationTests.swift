@@ -212,6 +212,12 @@ final class TileSpecActionTests: XCTestCase {
 }
 
 final class TileSpanTests: XCTestCase {
+    override func tearDown() {
+        TileEditSession.shared.revert()
+        TileEditSession.shared.select(nil)
+        super.tearDown()
+    }
+
     func testPadPageResolvesCoveredSlotToSpanOwner() {
         let page = PadPage(name: "Spans", tiles: [
             Tile(title: "Wide", symbol: "rectangle.fill", tint: .blue, action: .none, columnSpan: 2, rowSpan: 1),
@@ -239,6 +245,32 @@ final class TileSpanTests: XCTestCase {
         XCTAssertEqual(owner["title"] as? String, "Wide")
         XCTAssertEqual(owner["w"] as? Int, 2)
         XCTAssertEqual(covered["covered"] as? Bool, true)
+    }
+
+    func testTileEditSessionSetSpanClearsCoveredCells() throws {
+        let session = TileEditSession.shared
+        session.draft = [PadPage(name: "Spans", tiles: [
+            Tile(title: "Wide", symbol: "rectangle.fill", tint: .blue, action: .none, editable: true),
+            Tile(title: "Covered", symbol: "xmark", tint: .red, action: .none, editable: true)
+        ])]
+
+        session.setSpan(page: 0, slot: 0, columns: 2, rows: 1)
+
+        XCTAssertEqual(session.draft[0].tiles[0].normalizedColumnSpan, 2)
+        XCTAssertTrue(session.draft[0].tiles[1].isEmpty)
+        XCTAssertEqual(session.draft[0].ownerIndex(for: 1), 0)
+        XCTAssertTrue(session.dirty)
+    }
+
+    func testTileEditSessionClampsSpanAtGridEdge() throws {
+        let session = TileEditSession.shared
+        session.draft = [PadPage(name: "Spans", tiles: Array(repeating: PadStore.emptyTile, count: PadModel.perPage))]
+        session.draft[0].tiles[7] = Tile(title: "Edge", symbol: "rectangle.fill", tint: .blue, action: .none, editable: true)
+
+        session.setSpan(page: 0, slot: 7, columns: 3, rows: 3)
+
+        XCTAssertEqual(session.draft[0].tiles[7].normalizedColumnSpan, 1)
+        XCTAssertEqual(session.draft[0].tiles[7].normalizedRowSpan, 2)
     }
 }
 
