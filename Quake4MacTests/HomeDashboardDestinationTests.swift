@@ -50,6 +50,30 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(bundleID, "com.apple.Safari")
     }
 
+    func testAppLaunchResolverAcceptsApplicationPathAndName() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let app = root.appendingPathComponent("Demo.app", isDirectory: true)
+        try writeFakeAppBundle(at: app, bundleID: "com.example.Demo")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        XCTAssertEqual(AppLaunchResolver.applicationURL(for: app.path), app)
+        XCTAssertEqual(AppLaunchResolver.applicationURL(for: "Demo", searchDirectories: [root]), app)
+        XCTAssertEqual(AppLaunchResolver.bundleIdentifier(for: app.path), "com.example.Demo")
+    }
+
+    func testLaunchAppTileExposesBundleIdentifierForApplicationPath() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let app = root.appendingPathComponent("Demo.app", isDirectory: true)
+        try writeFakeAppBundle(at: app, bundleID: "com.example.Demo")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let tile = Tile(title: "Demo", symbol: "app", tint: .purple, action: .launchApp(bundleID: app.path))
+
+        XCTAssertEqual(tile.appBundleID, "com.example.Demo")
+    }
+
     func testMacroStepMapsOpenPathToPadAction() {
         let step = MacroStep(kind: .openPath, value: "~/Downloads", intValue: 0)
 
@@ -186,6 +210,22 @@ final class MacroActionTests: XCTestCase {
     func testOpenSettingsSystemActionMatchesOpenQuakeConfigValue() {
         XCTAssertEqual(SystemAction.openSettings.rawValue, "config")
         XCTAssertEqual(SystemAction.openSettings.title, "Open Settings")
+    }
+
+    private func writeFakeAppBundle(at url: URL, bundleID: String) throws {
+        let contents = url.appendingPathComponent("Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleIdentifier</key>
+            <string>\(bundleID)</string>
+        </dict>
+        </plist>
+        """
+        try plist.write(to: contents.appendingPathComponent("Info.plist"), atomically: true, encoding: .utf8)
     }
 }
 

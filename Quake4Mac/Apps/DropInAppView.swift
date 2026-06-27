@@ -317,8 +317,8 @@ private final class DropInTileActionRunner: ObservableObject {
 
     func run(_ action: PadAction) {
         switch action {
-        case .launchApp(let bundleID):
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+        case .launchApp(let value):
+            if let url = AppLaunchResolver.applicationURL(for: value) {
                 NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
             }
         case .openURL(let value):

@@ -52,6 +52,67 @@ enum SystemAction: String, Codable, CaseIterable, Identifiable, Hashable {
     }
 }
 
+enum AppLaunchResolver {
+    static func applicationURL(for value: String,
+                               searchDirectories: [URL]? = nil,
+                               fileManager: FileManager = .default) -> URL? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed) {
+            return url
+        }
+
+        let expanded = (trimmed as NSString).expandingTildeInPath
+        if expanded.hasPrefix("/") || expanded.hasPrefix(".") {
+            let url = URL(fileURLWithPath: expanded)
+            return isApplicationBundle(url, fileManager: fileManager) ? url : nil
+        }
+
+        let names = appCandidateNames(for: trimmed)
+        for directory in searchDirectories ?? defaultSearchDirectories {
+            for name in names {
+                let url = directory.appendingPathComponent(name)
+                if isApplicationBundle(url, fileManager: fileManager) { return url }
+            }
+        }
+        return nil
+    }
+
+    static func bundleIdentifier(for value: String, fileManager: FileManager = .default) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if NSWorkspace.shared.urlForApplication(withBundleIdentifier: trimmed) != nil {
+            return trimmed
+        }
+        guard let url = applicationURL(for: trimmed, fileManager: fileManager) else { return nil }
+        return Bundle(url: url)?.bundleIdentifier
+    }
+
+    private static var defaultSearchDirectories: [URL] {
+        var directories = [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications/Utilities", isDirectory: true)
+        ]
+        if let userApplications = FileManager.default.urls(for: .applicationDirectory, in: .userDomainMask).first {
+            directories.insert(userApplications, at: 1)
+        }
+        return directories
+    }
+
+    private static func appCandidateNames(for value: String) -> [String] {
+        if value.lowercased().hasSuffix(".app") { return [value] }
+        return [value, "\(value).app"]
+    }
+
+    private static func isApplicationBundle(_ url: URL, fileManager: FileManager) -> Bool {
+        guard url.pathExtension.lowercased() == "app" else { return false }
+        var isDirectory: ObjCBool = false
+        return fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+    }
+}
+
 enum TileIcon: Codable, Hashable {
     case emoji(String)
     case imagePath(String)
@@ -392,7 +453,9 @@ struct Tile: Identifiable {
 
     /// Bundle id when this tile launches an app — lets the tile show the real macOS app icon.
     var appBundleID: String? {
-        if case let .launchApp(bid) = action { return bid }
+        if case let .launchApp(value) = action {
+            return AppLaunchResolver.bundleIdentifier(for: value)
+        }
         return nil
     }
 
@@ -830,8 +893,8 @@ final class PadModel: ObservableObject {
 
     private func run(_ a: PadAction) {
         switch a {
-        case .launchApp(let bid):
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bid) {
+        case .launchApp(let value):
+            if let url = AppLaunchResolver.applicationURL(for: value) {
                 NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
             }
         case .openURL(let s):
