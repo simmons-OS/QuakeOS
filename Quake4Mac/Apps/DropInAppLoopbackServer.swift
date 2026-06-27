@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 
@@ -8,11 +9,13 @@ final class DropInAppLoopbackServer: ObservableObject {
     @Published private(set) var lastError = ""
 
     private let store: DropInAppStore
+    private let openURL: (URL) -> Bool
     private let queue = DispatchQueue(label: "quakeos.dropin.loopback")
     private var listener: NWListener?
 
-    init(store: DropInAppStore = .shared) {
+    init(store: DropInAppStore = .shared, openURL: @escaping (URL) -> Bool = DropInAppLoopbackServer.openExternally) {
         self.store = store
+        self.openURL = openURL
     }
 
     func start() {
@@ -80,10 +83,16 @@ final class DropInAppLoopbackServer: ObservableObject {
 
         let parts = requestLine.split(separator: " ")
         guard parts.count >= 2 else { return Self.response(status: 400) }
-        guard parts[0] == "GET" else { return Self.response(status: 405) }
+        let method = String(parts[0])
         guard Self.hostIsLoopback(request: request, port: port) else { return Self.response(status: 403) }
 
         let target = String(parts[1])
+        if let openRequest = Self.appOpenRequest(target) {
+            guard method == "POST" else { return Self.response(status: 405) }
+            return appOpenResponse(appID: openRequest.appID, url: openRequest.url, request: request)
+        }
+
+        guard method == "GET" else { return Self.response(status: 405) }
         if let appID = Self.appConfigAppID(target) {
             return appConfigResponse(appID: appID, request: request)
         }
@@ -100,6 +109,12 @@ final class DropInAppLoopbackServer: ObservableObject {
         } catch {
             return Self.response(status: (error as NSError).code == NSFileReadNoSuchFileError ? 404 : 500)
         }
+    }
+
+    private func appOpenResponse(appID: String, url: URL, request: String) -> Data {
+        guard Self.isSameOrigin(request: request, port: port) else { return Self.response(status: 403) }
+        guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
+        return openURL(url) ? Self.response(status: 204) : Self.response(status: 500)
     }
 
     private func appConfigResponse(appID: String, request: String) -> Data {
@@ -120,6 +135,19 @@ final class DropInAppLoopbackServer: ObservableObject {
               let appID = components.queryItems?.first(where: { $0.name == "app" })?.value,
               DropInAppStore.isValidAppID(appID) else { return nil }
         return appID
+    }
+
+    static func appOpenRequest(_ target: String) -> (appID: String, url: URL)? {
+        guard let components = URLComponents(string: "http://127.0.0.1\(target)"),
+              components.path == "/app-api/open",
+              let appID = components.queryItems?.first(where: { $0.name == "app" })?.value,
+              DropInAppStore.isValidAppID(appID),
+              let target = components.queryItems?.first(where: { $0.name == "url" })?.value,
+              let url = URL(string: target),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              url.host != nil else { return nil }
+        return (appID, url)
     }
 
     static func servedAppRequest(_ target: String) -> (appID: String, relativePath: String)? {
@@ -184,6 +212,17 @@ final class DropInAppLoopbackServer: ObservableObject {
         }
     }
 
+    private static func openExternally(_ url: URL) -> Bool {
+        if Thread.isMainThread {
+            return NSWorkspace.shared.open(url)
+        }
+        var didOpen = false
+        DispatchQueue.main.sync {
+            didOpen = NSWorkspace.shared.open(url)
+        }
+        return didOpen
+    }
+
     private static func headerValue(_ name: String, in lines: [String]) -> String? {
         let prefix = "\(name.lowercased()):"
         return lines.first { $0.lowercased().hasPrefix(prefix) }?
@@ -204,6 +243,7 @@ final class DropInAppLoopbackServer: ObservableObject {
         let reason: String
         switch status {
         case 200: reason = "OK"
+        case 204: reason = "No Content"
         case 400: reason = "Bad Request"
         case 403: reason = "Forbidden"
         case 404: reason = "Not Found"
