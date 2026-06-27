@@ -44,6 +44,13 @@ struct DropInAppServerActionResponse {
 typealias DropInAppServerActionHandler =
     (DropInAppServerActionContext) -> Result<DropInAppServerActionResponse, Error>?
 
+struct DropInAppNodeRuntimeStatus: Equatable {
+    let nodeURL: URL?
+
+    var isAvailable: Bool { nodeURL != nil }
+    var displayPath: String { nodeURL?.path ?? "Node runtime not found" }
+}
+
 enum DropInAppNodeServerActionError: LocalizedError, Equatable {
     case nodeUnavailable
     case launchFailed(String)
@@ -102,12 +109,13 @@ final class DropInAppNodeServerActionHandler {
     }
 
     static func resolveNodeURL(environment: [String: String] = ProcessInfo.processInfo.environment,
+                               standardCandidatePaths: [String] = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"],
                                fileManager: FileManager = .default) -> URL? {
         var candidates: [String] = []
         if let explicit = environment["QUAKEOS_NODE_PATH"], !explicit.isEmpty {
             candidates.append(explicit)
         }
-        candidates.append(contentsOf: ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"])
+        candidates.append(contentsOf: standardCandidatePaths)
         if let path = environment["PATH"] {
             candidates.append(contentsOf: path.split(separator: ":").map { "\($0)/node" })
         }
@@ -116,6 +124,14 @@ final class DropInAppNodeServerActionHandler {
             return URL(fileURLWithPath: path)
         }
         return nil
+    }
+
+    static func runtimeStatus(environment: [String: String] = ProcessInfo.processInfo.environment,
+                              standardCandidatePaths: [String] = ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"],
+                              fileManager: FileManager = .default) -> DropInAppNodeRuntimeStatus {
+        DropInAppNodeRuntimeStatus(nodeURL: resolveNodeURL(environment: environment,
+                                                           standardCandidatePaths: standardCandidatePaths,
+                                                           fileManager: fileManager))
     }
 
     private func inputData(for context: DropInAppServerActionContext) throws -> Data {

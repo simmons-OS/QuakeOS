@@ -808,6 +808,44 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(error as? DropInAppNodeServerActionError, .nodeUnavailable)
     }
 
+    func testNodeRuntimeStatusResolvesExplicitNodePath() throws {
+        let node = try temporaryExecutable(named: "custom-node")
+
+        let status = DropInAppNodeServerActionHandler.runtimeStatus(
+            environment: ["QUAKEOS_NODE_PATH": node.path, "PATH": ""],
+            standardCandidatePaths: []
+        )
+
+        XCTAssertTrue(status.isAvailable)
+        XCTAssertEqual(status.nodeURL, node)
+        XCTAssertEqual(status.displayPath, node.path)
+    }
+
+    func testNodeRuntimeStatusResolvesPathNode() throws {
+        let bin = temporaryDirectory()
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let node = try temporaryExecutable(named: "node", in: bin)
+
+        let status = DropInAppNodeServerActionHandler.runtimeStatus(
+            environment: ["PATH": bin.path],
+            standardCandidatePaths: []
+        )
+
+        XCTAssertTrue(status.isAvailable)
+        XCTAssertEqual(status.nodeURL, node)
+    }
+
+    func testNodeRuntimeStatusReportsMissingNode() {
+        let status = DropInAppNodeServerActionHandler.runtimeStatus(
+            environment: ["PATH": ""],
+            standardCandidatePaths: []
+        )
+
+        XCTAssertFalse(status.isAvailable)
+        XCTAssertNil(status.nodeURL)
+        XCTAssertEqual(status.displayPath, "Node runtime not found")
+    }
+
     func testLoopbackServerRejectsActionStyleOpenWithoutRequestingAppReferer() throws {
         let root = temporaryDirectory()
         try writeApp(root: root, folder: "clock", manifest: """
@@ -1188,6 +1226,16 @@ final class DropInAppStoreTests: XCTestCase {
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    private func temporaryExecutable(named name: String, in directory: URL? = nil) throws -> URL {
+        let root = directory ?? temporaryDirectory()
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let url = root.appendingPathComponent(name)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: url.path)
+        return url
     }
 
     private func temporaryDefaults() -> UserDefaults {
