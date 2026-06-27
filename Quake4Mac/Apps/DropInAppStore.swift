@@ -171,6 +171,14 @@ final class DropInAppStore: ObservableObject {
         return components.url
     }
 
+    func clientConfigPayload(for app: DropInAppRecord) -> [String: Any] {
+        [
+            "app": app.id,
+            "options": Self.resolvedClientOptionValues(for: app.manifest.options,
+                                                       values: optionValuesByAppID[app.id] ?? [:])
+        ]
+    }
+
     func optionValue(appID: String, option: DropInAppOption) -> String {
         optionValuesByAppID[appID]?[option.key] ?? option.defaultValue ?? ""
     }
@@ -324,8 +332,22 @@ final class DropInAppStore: ObservableObject {
         return components.percentEncodedQuery
     }
 
+    static func resolvedClientOptionValues(for options: [DropInAppOption],
+                                           values: [String: String] = [:]) -> [String: Any] {
+        var resolved: [String: Any] = [:]
+        for option in clientOptions(options) {
+            let value = values[option.key] ?? option.defaultValue ?? ""
+            resolved[option.key] = isBooleanOption(option) ? value == "true" : value
+        }
+        return resolved
+    }
+
     private static func isClientOption(_ option: DropInAppOption) -> Bool {
         option.type != "secret" && !option.serverOnly
+    }
+
+    private static func isBooleanOption(_ option: DropInAppOption) -> Bool {
+        option.type == "bool" || option.type == "boolean"
     }
 
     static func percentEncodedPath(_ path: String) -> String {

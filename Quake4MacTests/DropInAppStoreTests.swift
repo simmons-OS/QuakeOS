@@ -91,12 +91,44 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(DropInAppStore.clientOptions(options).map(\.key), ["theme"])
     }
 
+    func testClientConfigPayloadExcludesSecretsAndCoercesBooleans() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"seconds","type":"boolean","default":false},
+          {"key":"token","type":"secret","default":"abc"},
+          {"key":"hostToken","type":"text","default":"server","serverOnly":true}
+        ]}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        let app = try XCTUnwrap(store.apps.first)
+        store.setOptionValue(appID: app.id, optionKey: "seconds", value: "true")
+
+        let payload = store.clientConfigPayload(for: app)
+        let options = try XCTUnwrap(payload["options"] as? [String: Any])
+
+        XCTAssertEqual(payload["app"] as? String, "clock")
+        XCTAssertEqual(options["theme"] as? String, "dark")
+        XCTAssertEqual(options["seconds"] as? Bool, true)
+        XCTAssertNil(options["token"])
+        XCTAssertNil(options["hostToken"])
+    }
+
     func testLoopbackServerParsesServedAppRequests() {
         XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/index.html")?.appID, "clock")
         XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/nested%20file.html")?.relativePath,
                        "nested file.html")
         XCTAssertNil(DropInAppLoopbackServer.servedAppRequest("/app/clock/index.html"))
         XCTAssertNil(DropInAppLoopbackServer.servedAppRequest("/apps/Bad/index.html"))
+    }
+
+    func testLoopbackServerParsesAppConfigRequests() {
+        XCTAssertEqual(DropInAppLoopbackServer.appConfigAppID("/app-config?app=clock"), "clock")
+        XCTAssertNil(DropInAppLoopbackServer.appConfigAppID("/app-config"))
+        XCTAssertNil(DropInAppLoopbackServer.appConfigAppID("/app-config?app=Bad"))
+        XCTAssertNil(DropInAppLoopbackServer.appConfigAppID("/apps/clock/index.html"))
     }
 
     func testLoopbackHostCheckRequiresCurrentLoopbackPort() {
@@ -109,6 +141,19 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertTrue(DropInAppLoopbackServer.hostIsLoopback(request: local, port: 49152))
         XCTAssertFalse(DropInAppLoopbackServer.hostIsLoopback(request: badPort, port: 49152))
         XCTAssertFalse(DropInAppLoopbackServer.hostIsLoopback(request: badHost, port: 49152))
+    }
+
+    func testLoopbackSameOriginGateAcceptsFetchOriginOrReferer() {
+        let fetch = "GET /app-config?app=clock HTTP/1.1\r\nSec-Fetch-Site: same-origin\r\n\r\n"
+        let origin = "GET /app-config?app=clock HTTP/1.1\r\nOrigin: http://127.0.0.1:49152\r\n\r\n"
+        let referer = "GET /app-config?app=clock HTTP/1.1\r\nReferer: http://127.0.0.1:49152/apps/clock/index.html\r\n\r\n"
+        let cross = "GET /app-config?app=clock HTTP/1.1\r\nOrigin: http://example.com\r\n\r\n"
+
+        XCTAssertTrue(DropInAppLoopbackServer.isSameOrigin(request: fetch, port: 49152))
+        XCTAssertTrue(DropInAppLoopbackServer.isSameOrigin(request: origin, port: 49152))
+        XCTAssertTrue(DropInAppLoopbackServer.isSameOrigin(request: referer, port: 49152))
+        XCTAssertFalse(DropInAppLoopbackServer.isSameOrigin(request: cross, port: 49152))
+        XCTAssertFalse(DropInAppLoopbackServer.isSameOrigin(request: "GET / HTTP/1.1\r\n\r\n", port: 49152))
     }
 
     func testLoopbackServerServesContainedServedAppFile() throws {
@@ -131,6 +176,63 @@ final class DropInAppStoreTests: XCTestCase {
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), "<html>served</html>")
             XCTAssertNotNil((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Security-Policy"))
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerServesSameOriginClientConfig() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"seconds","type":"boolean","default":false},
+          {"key":"token","type":"secret","default":"abc"}
+        ]}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        store.setOptionValue(appID: "clock", optionKey: "seconds", value: "true")
+        let server = DropInAppLoopbackServer(store: store)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/app-config?app=clock")!)
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        let done = expectation(description: "app config response")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let json = try? JSONSerialization.jsonObject(with: data ?? Data()) as? [String: Any]
+            let options = json?["options"] as? [String: Any]
+            XCTAssertEqual(json?["app"] as? String, "clock")
+            XCTAssertEqual(options?["theme"] as? String, "dark")
+            XCTAssertEqual(options?["seconds"] as? Bool, true)
+            XCTAssertNil(options?["token"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsCrossOriginClientConfig() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root))
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        let done = expectation(description: "app config rejection")
+
+        URLSession.shared.dataTask(with: URL(string: "http://127.0.0.1:\(port)/app-config?app=clock")!) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
             done.fulfill()
         }.resume()
 
