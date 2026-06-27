@@ -196,6 +196,9 @@ struct TileInspectorRail: View {
         case "text":    return ("Types text", str)
         case "shell":   return ("Runs a shell command", str)
         case "ascript": return ("Runs an AppleScript", str)
+        case "system":
+            let action = SystemAction(rawValue: str ?? "") ?? .lockScreen
+            return ("Runs \(action.title)", nil)
         case "lum":     return ("Adjusts brightness by \((int ?? 0) >= 0 ? "+" : "")\(int ?? 0)", nil)
         case "page":    return ("Switches to the \(str ?? "—") page", nil)
         case "macro":   return ("Runs \(steps?.count ?? 0) steps", nil)
@@ -251,6 +254,7 @@ struct TileInspectorRail: View {
         case "open":    return .openPath(eValue)
         case "shell":   return .shell(eValue)
         case "ascript": return .appleScript(eValue)
+        case "system":  return .system(SystemAction(rawValue: eValue) ?? .lockScreen)
         case "lum":     return .luminance(delta: eDelta)
         case "page":    return .openPage(eValue)
         case "key":     return .keyCombo(eValue)
@@ -287,6 +291,7 @@ struct TileInspectorRail: View {
         case .openPath(let p):    eKind = "open";    eValue = p
         case .shell(let c):       eKind = "shell";   eValue = c
         case .appleScript(let s): eKind = "ascript"; eValue = s
+        case .system(let action): eKind = "system";  eValue = action.rawValue
         case .luminance(let d):   eKind = "lum";     eDelta = d
         case .openPage(let n):    eKind = "page";    eValue = n
         case .keyCombo(let k):    eKind = "key";     eValue = k
@@ -394,11 +399,13 @@ struct TileInspectorRail: View {
                         Picker("", selection: $eKind) {
                             Text("None").tag("none"); Text("Open App").tag("app"); Text("Open URL").tag("url")
                             Text("Open File/Folder").tag("open"); Text("Keystroke").tag("key"); Text("Type Text").tag("text")
-                            Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("Brightness").tag("lum")
+                            Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("Lock Screen").tag("system")
+                            Text("Brightness").tag("lum")
                             Text("Go to Page").tag("page"); Text("Macro Steps").tag("macro")
                         }
                         .labelsHidden().frame(maxWidth: .infinity)
                         .onChange(of: eKind) { newKind in
+                            if newKind == "system" { eValue = SystemAction.lockScreen.rawValue }
                             if newKind == "macro", eSteps.isEmpty { eSteps = [MacroStep.defaultStep()] }
                             applyInspector()
                         }
@@ -450,6 +457,10 @@ struct TileInspectorRail: View {
             labeledField("Command", placeholder: "open ~/Downloads")
         case "ascript":
             labeledField("Script", placeholder: "tell application …")
+        case "system":
+            Text("Locks this Mac using the standard macOS Lock Screen shortcut.")
+                .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
         case "lum":
             HStack {
                 Text("Delta").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary).frame(width: 70, alignment: .leading)
@@ -603,6 +614,9 @@ struct TileInspectorRail: View {
                     macroStepTextField(index)
                     pill("Choose File...", NeonTheme.purple) { chooseMacroStepPath(index) }
                 }
+            case .lockScreen:
+                Text("Locks this Mac.")
+                    .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
             default:
                 macroStepTextField(index)
             }
@@ -680,6 +694,7 @@ struct TileInspectorRail: View {
         case .openPath: return "~/Downloads"
         case .shell: return "open ~/Downloads"
         case .appleScript: return "tell application …"
+        case .lockScreen: return ""
         case .page: return PadStore.shared.pages.first?.name ?? "Apps"
         case .delay, .brightness: return ""
         }
