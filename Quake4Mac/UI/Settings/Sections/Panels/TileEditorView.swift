@@ -12,6 +12,55 @@ import SwiftUI
 import AppKit
 import UniformTypeIdentifiers
 
+enum RecordedKeyCombo {
+    static func combo(keyCode: UInt16, characters: String?, modifierFlags: NSEvent.ModifierFlags) -> String? {
+        guard let key = keyName(keyCode: keyCode, characters: characters) else { return nil }
+        let flags = modifierFlags.intersection(.deviceIndependentFlagsMask)
+        var parts: [String] = []
+        if flags.contains(.command) { parts.append("command") }
+        if flags.contains(.control) { parts.append("control") }
+        if flags.contains(.option) { parts.append("option") }
+        if flags.contains(.shift) { parts.append("shift") }
+        parts.append(key)
+        return parts.joined(separator: "+")
+    }
+
+    private static func keyName(keyCode: UInt16, characters: String?) -> String? {
+        switch keyCode {
+        case 36: return "enter"
+        case 48: return "tab"
+        case 49: return "space"
+        case 51: return "backspace"
+        case 53: return "escape"
+        case 96: return "f5"
+        case 97: return "f6"
+        case 98: return "f7"
+        case 99: return "f3"
+        case 100: return "f8"
+        case 101: return "f9"
+        case 103: return "f11"
+        case 109: return "f10"
+        case 111: return "f12"
+        case 115: return "home"
+        case 116: return "pageup"
+        case 117: return "delete"
+        case 118: return "f4"
+        case 119: return "end"
+        case 120: return "f2"
+        case 121: return "pagedown"
+        case 122: return "f1"
+        case 123: return "left"
+        case 124: return "right"
+        case 125: return "down"
+        case 126: return "up"
+        default:
+            guard let value = characters?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                  !value.isEmpty else { return nil }
+            return value
+        }
+    }
+}
+
 struct TileEditorView: View {
     let pageName: String
     @State private var category = "All"
@@ -135,6 +184,13 @@ struct TileInspectorRail: View {
     @State private var eIconCachePath = ""
     @State private var eIconStatus = ""
     @State private var eIconFetching = false
+    @State private var recordingKeyTarget: KeyRecordingTarget?
+    @State private var keyRecorderMonitor: Any?
+
+    private enum KeyRecordingTarget: Equatable {
+        case tileAction
+        case macroStep(Int)
+    }
 
     private var stripSelected: Bool {
         session.selectedSlot != nil && session.index(ofPage: pageName) != nil
@@ -154,8 +210,9 @@ struct TileInspectorRail: View {
             .padding(18)
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .onChange(of: session.selectedSlot) { _ in loadInspector() }
+        .onChange(of: session.selectedSlot) { _ in stopKeyRecording(); loadInspector() }
         .onAppear { loadInspector() }
+        .onDisappear { stopKeyRecording() }
     }
 
     private var placeholder: some View {
@@ -459,7 +516,7 @@ struct TileInspectorRail: View {
                 HStack { Spacer(); pill("Choose File…", NeonTheme.purple) { choosePath() } }
             }
         case "key":
-            labeledField("Keystroke", placeholder: "command+shift+p")
+            keyActionValueRow
         case "text":
             labeledField("Text", placeholder: "Meeting notes")
         case "paste":
@@ -647,6 +704,11 @@ struct TileInspectorRail: View {
                     macroStepTextField(index)
                     pill("Choose File...", NeonTheme.purple) { chooseMacroStepPath(index) }
                 }
+            case .key:
+                HStack(spacing: 8) {
+                    macroStepTextField(index)
+                    keyRecorderButton(.macroStep(index))
+                }
             case .lockScreen, .openSettings:
                 Text(macroStepSystemDescription(eSteps[index].kind))
                     .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
@@ -714,6 +776,59 @@ struct TileInspectorRail: View {
         } set: { value in
             guard eSteps.indices.contains(index) else { return }
             eSteps[index].intValue = value
+            applyInspector()
+        }
+    }
+
+    private var keyActionValueRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Keystroke").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+            HStack(spacing: 8) {
+                field($eValue, placeholder: "command+shift+p")
+                keyRecorderButton(.tileAction)
+            }
+        }
+    }
+
+    private func keyRecorderButton(_ target: KeyRecordingTarget) -> some View {
+        let recording = recordingKeyTarget == target
+        return pill(recording ? "Press keys..." : "Record", recording ? NeonTheme.magenta : NeonTheme.purple) {
+            startKeyRecording(target)
+        }
+    }
+
+    private func startKeyRecording(_ target: KeyRecordingTarget) {
+        stopKeyRecording()
+        recordingKeyTarget = target
+        keyRecorderMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            if let combo = RecordedKeyCombo.combo(
+                keyCode: event.keyCode,
+                characters: event.charactersIgnoringModifiers,
+                modifierFlags: event.modifierFlags
+            ) {
+                applyRecordedKey(combo, to: target)
+                stopKeyRecording()
+            }
+            return nil
+        }
+    }
+
+    private func stopKeyRecording() {
+        if let keyRecorderMonitor {
+            NSEvent.removeMonitor(keyRecorderMonitor)
+        }
+        keyRecorderMonitor = nil
+        recordingKeyTarget = nil
+    }
+
+    private func applyRecordedKey(_ combo: String, to target: KeyRecordingTarget) {
+        switch target {
+        case .tileAction:
+            eValue = combo
+            applyInspector()
+        case .macroStep(let index):
+            guard eSteps.indices.contains(index) else { return }
+            eSteps[index].value = combo
             applyInspector()
         }
     }

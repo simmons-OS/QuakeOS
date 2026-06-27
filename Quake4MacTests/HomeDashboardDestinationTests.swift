@@ -1,4 +1,5 @@
 import XCTest
+import AppKit
 @testable import Quake4Mac
 
 final class HomeDashboardDestinationTests: XCTestCase {
@@ -97,6 +98,30 @@ final class MacroActionTests: XCTestCase {
 
     func testMacroTextEscapesAppleScriptStrings() {
         XCTAssertEqual(MacroText.escapedAppleScriptString("a \"quote\" \\ path"), "a \\\"quote\\\" \\\\ path")
+    }
+
+    func testRecordedKeyComboBuildsCommandShiftLetter() {
+        let combo = RecordedKeyCombo.combo(keyCode: 0, characters: "p", modifierFlags: [.command, .shift])
+
+        XCTAssertEqual(combo, "command+shift+p")
+    }
+
+    func testRecordedKeyComboBuildsSpecialKeyName() {
+        let combo = RecordedKeyCombo.combo(keyCode: 126, characters: nil, modifierFlags: [.control])
+
+        XCTAssertEqual(combo, "control+up")
+    }
+
+    func testRecordedKeyComboBuildsFunctionKeyName() {
+        let combo = RecordedKeyCombo.combo(keyCode: 122, characters: nil, modifierFlags: [.option])
+
+        XCTAssertEqual(combo, "option+f1")
+    }
+
+    func testRecordedKeyComboIgnoresModifierOnlyKeypress() {
+        let combo = RecordedKeyCombo.combo(keyCode: 0, characters: nil, modifierFlags: [.command])
+
+        XCTAssertNil(combo)
     }
 
     func testLockScreenSystemActionUsesMacShortcut() throws {
