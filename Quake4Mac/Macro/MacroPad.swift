@@ -1138,9 +1138,33 @@ final class TileEditSession: ObservableObject {
 
     /// The non-empty tile at a slot, or nil.
     func tile(page: Int, slot: Int) -> Tile? {
-        guard draft.indices.contains(page), draft[page].tiles.indices.contains(slot) else { return nil }
-        let t = draft[page].tiles[slot]
+        guard draft.indices.contains(page) else { return nil }
+        let owner = draft[page].ownerIndex(for: slot) ?? slot
+        guard draft[page].tiles.indices.contains(owner) else { return nil }
+        let t = draft[page].tiles[owner]
         return t.title.isEmpty ? nil : t
+    }
+
+    func spanBounds(page: Int, slot: Int) -> (columns: ClosedRange<Int>, rows: ClosedRange<Int>) {
+        guard draft.indices.contains(page), slot >= 0, slot < PadModel.perPage else {
+            return (1...1, 1...1)
+        }
+        let owner = draft[page].ownerIndex(for: slot) ?? slot
+        let column = owner % PadModel.cols
+        let row = owner / PadModel.cols
+        return (1...max(1, PadModel.cols - column), 1...max(1, PadModel.rows - row))
+    }
+
+    func setSpan(page: Int, slot: Int, columns: Int, rows: Int) {
+        guard draft.indices.contains(page),
+              let owner = normalizedOwner(page: page, slot: slot),
+              let t0 = tile(page: page, slot: owner) else { return }
+        let bounds = spanBounds(page: page, slot: owner)
+        let columnSpan = min(max(columns, bounds.columns.lowerBound), bounds.columns.upperBound)
+        let rowSpan = min(max(rows, bounds.rows.lowerBound), bounds.rows.upperBound)
+        setTile(page: page, slot: owner, Tile(title: t0.title, symbol: t0.symbol, tint: t0.tint, action: t0.action,
+                                             image: t0.image, editable: t0.editable, customIcon: t0.customIcon,
+                                             columnSpan: columnSpan, rowSpan: rowSpan))
     }
 
     /// Edit a placed tile's title + action, keeping its glyph/tint.
@@ -1164,12 +1188,45 @@ final class TileEditSession: ObservableObject {
     }
 
     func setTile(page: Int, slot: Int, _ tile: Tile?) {
-        guard draft.indices.contains(page), slot >= 0, slot < PadModel.perPage else { return }
+        guard draft.indices.contains(page),
+              let owner = normalizedOwner(page: page, slot: slot) else { return }
         var tiles = draft[page].tiles
-        while tiles.count <= slot { tiles.append(PadStore.emptyTile) }
-        tiles[slot] = tile ?? PadStore.emptyTile
+        while tiles.count < PadModel.perPage { tiles.append(PadStore.emptyTile) }
+        let currentPage = PadPage(name: draft[page].name, tiles: tiles, kind: draft[page].kind)
+        clearSpanSlots(owner: owner, span: currentPage.tileSpan(at: owner), in: &tiles)
+        if let tile {
+            let bounds = spanBounds(page: page, slot: owner)
+            let columnSpan = min(max(tile.columnSpan, bounds.columns.lowerBound), bounds.columns.upperBound)
+            let rowSpan = min(max(tile.rowSpan, bounds.rows.lowerBound), bounds.rows.upperBound)
+            tiles[owner] = Tile(title: tile.title, symbol: tile.symbol, tint: tile.tint, action: tile.action,
+                                image: tile.image, editable: tile.editable, customIcon: tile.customIcon,
+                                columnSpan: columnSpan, rowSpan: rowSpan)
+            clearSpanSlots(owner: owner, span: (columnSpan, rowSpan), in: &tiles, keepingOwner: true)
+        } else {
+            tiles[owner] = PadStore.emptyTile
+        }
         draft[page].tiles = tiles
+        if selectedSlot == slot, owner != slot { selectedSlot = owner }
         dirty = true
+    }
+
+    private func normalizedOwner(page: Int, slot: Int) -> Int? {
+        guard draft.indices.contains(page), slot >= 0, slot < PadModel.perPage else { return nil }
+        return draft[page].ownerIndex(for: slot) ?? slot
+    }
+
+    private func clearSpanSlots(owner: Int, span: (columns: Int, rows: Int), in tiles: inout [Tile], keepingOwner: Bool = false) {
+        let ownerColumn = owner % PadModel.cols
+        let ownerRow = owner / PadModel.cols
+        let columns = max(1, min(span.columns, PadModel.cols - ownerColumn))
+        let rows = max(1, min(span.rows, PadModel.rows - ownerRow))
+        for rowOffset in 0..<rows {
+            for columnOffset in 0..<columns {
+                let index = owner + rowOffset * PadModel.cols + columnOffset
+                guard tiles.indices.contains(index), !(keepingOwner && index == owner) else { continue }
+                tiles[index] = PadStore.emptyTile
+            }
+        }
     }
 
     /// Commit the draft → device + disk.

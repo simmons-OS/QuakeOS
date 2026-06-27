@@ -178,6 +178,8 @@ struct TileInspectorRail: View {
     @State private var eKind = "none"
     @State private var eValue = ""
     @State private var eDelta = 26
+    @State private var eColumns = 1
+    @State private var eRows = 1
     @State private var eSteps: [MacroStep] = []
     @State private var eIconKind = "auto"
     @State private var eIconValue = ""
@@ -337,7 +339,9 @@ struct TileInspectorRail: View {
     private func loadInspector() {
         guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot,
               let t = session.tile(page: p, slot: sel) else { return }
+        let span = session.draft[p].tileSpan(at: session.draft[p].ownerIndex(for: sel) ?? sel)
         eTitle = t.title; eValue = ""; eDelta = 26; eSteps = []
+        eColumns = span.columns; eRows = span.rows
         eIconKind = "auto"; eIconValue = ""; eIconCachePath = ""; eIconStatus = ""; eIconFetching = false
         switch t.customIcon {
         case .emoji(let value): eIconKind = "emoji"; eIconValue = value
@@ -372,6 +376,16 @@ struct TileInspectorRail: View {
     private func applyIcon() {
         guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot else { return }
         session.setCustomIcon(page: p, slot: sel, customIcon: currentCustomIcon)
+    }
+
+    private func applySpan() {
+        guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot else { return }
+        let bounds = session.spanBounds(page: p, slot: sel)
+        let columns = min(max(eColumns, bounds.columns.lowerBound), bounds.columns.upperBound)
+        let rows = min(max(eRows, bounds.rows.lowerBound), bounds.rows.upperBound)
+        if eColumns != columns { eColumns = columns }
+        if eRows != rows { eRows = rows }
+        session.setSpan(page: p, slot: sel, columns: columns, rows: rows)
     }
 
     private func chooseApp() {
@@ -487,6 +501,7 @@ struct TileInspectorRail: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
+                tileSizeControls
                 HStack(spacing: 10) {
                     Spacer()
                     pill("Remove", NeonTheme.magenta) {
@@ -496,6 +511,54 @@ struct TileInspectorRail: View {
                 }
             }
             .padding(.vertical, 8)
+        }
+    }
+
+    private var tileSizeControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Size").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+            HStack(spacing: 12) {
+                spanStepper(label: "Width", value: $eColumns, range: spanColumnRange)
+                spanStepper(label: "Height", value: $eRows, range: spanRowRange)
+            }
+            HStack {
+                Text("\(eColumns) × \(eRows)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundColor(NeonTheme.textTertiary)
+                Spacer()
+                pill("Reset", NeonTheme.purple) {
+                    eColumns = 1
+                    eRows = 1
+                    applySpan()
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var spanColumnRange: ClosedRange<Int> {
+        guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot else { return 1...1 }
+        return session.spanBounds(page: p, slot: sel).columns
+    }
+
+    private var spanRowRange: ClosedRange<Int> {
+        guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot else { return 1...1 }
+        return session.spanBounds(page: p, slot: sel).rows
+    }
+
+    private func spanStepper(label: String, value: Binding<Int>, range: ClosedRange<Int>) -> some View {
+        HStack(spacing: 6) {
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundColor(NeonTheme.textTertiary)
+                .frame(width: 42, alignment: .leading)
+            Stepper("", value: value, in: range, step: 1)
+                .labelsHidden()
+                .onChange(of: value.wrappedValue) { _ in applySpan() }
+            Text("\(value.wrappedValue)")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundColor(NeonTheme.textSecondary)
+                .frame(width: 16, alignment: .trailing)
         }
     }
 
