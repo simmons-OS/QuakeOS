@@ -478,6 +478,7 @@ final class PadModel: ObservableObject {
 
     private unowned let input: QuakeInputReader
     private var storeSub: AnyCancellable?
+    private var pageRequestObserver: NSObjectProtocol?
     private var macroBusy = false
 
     /// Pages come from the shared, persisted store so the device, the settings preview, and the
@@ -487,7 +488,19 @@ final class PadModel: ObservableObject {
     init(input: QuakeInputReader) {
         self.input = input
         storeSub = PadStore.shared.$pages.sink { [weak self] _ in self?.objectWillChange.send() }
+        pageRequestObserver = NotificationCenter.default.addObserver(
+            forName: .quakeOpenPageRequested, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let pageName = notification.object as? String else { return }
+            self?.openPage(named: pageName)
+        }
         applyStartup()
+    }
+
+    deinit {
+        if let pageRequestObserver {
+            NotificationCenter.default.removeObserver(pageRequestObserver)
+        }
     }
 
     var current: PadPage { pages[min(pageIndex, pages.count - 1)] }
@@ -556,6 +569,11 @@ final class PadModel: ObservableObject {
         recents.append(dest)
         if recents.count > 8 { recents.removeFirst(recents.count - 8) }
         saveLastNav()
+    }
+
+    func openPage(named name: String) {
+        guard pages.contains(where: { $0.name == name }) else { return }
+        openApp(.macroPage(name))
     }
 
     // MARK: App switcher (knob-driven recents carousel)
@@ -819,7 +837,7 @@ final class PadModel: ObservableObject {
         case .luminance(let d):
             input.setLuminance(input.luminance + d)
         case .openPage(let name):
-            if let i = pages.firstIndex(where: { $0.name == name }) { pageIndex = i }
+            openPage(named: name)
         case .keyCombo(let combo):
             if let source = MacroKeyCombo.appleScriptSource(for: combo) { runAppleScript(source) }
         case .typeText(let text):
