@@ -18,12 +18,30 @@ enum PadAction {
     case openPath(String)              // open a local file or folder
     case shell(String)                 // run a shell command (/bin/zsh -lc)
     case appleScript(String)           // run an AppleScript snippet
+    case system(SystemAction)          // invoke a built-in macOS system action
     case luminance(delta: Int)         // nudge the Quake panel backlight
     case openPage(String)              // jump to another Quake page (by name)
     case keyCombo(String)              // send a key combo to the focused app via System Events
     case typeText(String)              // type literal text into the focused app
     case macro([MacroStep])            // run ordered macro steps without overlap
     case none
+}
+
+enum SystemAction: String, Codable, Hashable {
+    case lockScreen
+
+    var title: String {
+        switch self {
+        case .lockScreen: return "Lock Screen"
+        }
+    }
+
+    var appleScriptSource: String {
+        switch self {
+        case .lockScreen:
+            return MacroKeyCombo.appleScriptSource(for: "control+command+q") ?? ""
+        }
+    }
 }
 
 enum TileIcon: Codable, Hashable {
@@ -192,6 +210,7 @@ enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case openPath
     case shell
     case appleScript
+    case lockScreen
     case page
     case brightness
 
@@ -207,6 +226,7 @@ enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
         case .openPath: return "Open File/Folder"
         case .shell: return "Shell"
         case .appleScript: return "AppleScript"
+        case .lockScreen: return "Lock Screen"
         case .page: return "Go to Page"
         case .brightness: return "Brightness"
         }
@@ -263,6 +283,7 @@ struct MacroStep: Identifiable, Codable, Hashable {
         case .openPath: return .openPath(value)
         case .shell: return .shell(value)
         case .appleScript: return .appleScript(value)
+        case .lockScreen: return .system(.lockScreen)
         case .page: return .openPage(value)
         case .brightness: return .luminance(delta: intValue)
         }
@@ -702,6 +723,8 @@ final class PadModel: ObservableObject {
             try? p.run()
         case .appleScript(let src):
             runAppleScript(src)
+        case .system(let action):
+            runAppleScript(action.appleScriptSource)
         case .luminance(let d):
             input.setLuminance(input.luminance + d)
         case .openPage(let name):
@@ -889,6 +912,7 @@ private struct ActionDTO: Codable {
         case .openPath(let p):    kind = "open";    s = p
         case .shell(let c):       kind = "shell";   s = c
         case .appleScript(let x): kind = "ascript"; s = x
+        case .system(let action): kind = "system";  s = action.rawValue
         case .luminance(let d):   kind = "lum";     i = d
         case .openPage(let n):    kind = "page";    s = n
         case .keyCombo(let k):    kind = "key";     s = k
@@ -904,6 +928,7 @@ private struct ActionDTO: Codable {
         case "open":    return .openPath(s ?? "")
         case "shell":   return .shell(s ?? "")
         case "ascript": return .appleScript(s ?? "")
+        case "system":  return .system(SystemAction(rawValue: s ?? "") ?? .lockScreen)
         case "lum":     return .luminance(delta: i ?? 0)
         case "page":    return .openPage(s ?? "")
         case "key":     return .keyCombo(s ?? "")

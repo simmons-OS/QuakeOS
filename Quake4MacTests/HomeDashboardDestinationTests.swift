@@ -48,6 +48,14 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(path, "~/Downloads")
     }
 
+    func testMacroStepMapsLockScreenToSystemAction() {
+        let step = MacroStep(kind: .lockScreen, value: "", intValue: 0)
+
+        guard case .system(.lockScreen)? = step.padAction else {
+            return XCTFail("Expected lock screen system action")
+        }
+    }
+
     func testMacroStepJSONDefaultsMissingID() throws {
         let data = #"{"kind":"key","value":"command+p","intValue":0}"#.data(using: .utf8)!
         let step = try JSONDecoder().decode(MacroStep.self, from: data)
@@ -72,6 +80,27 @@ final class MacroActionTests: XCTestCase {
 
     func testMacroTextEscapesAppleScriptStrings() {
         XCTAssertEqual(MacroText.escapedAppleScriptString("a \"quote\" \\ path"), "a \\\"quote\\\" \\\\ path")
+    }
+
+    func testLockScreenSystemActionUsesMacShortcut() {
+        let source = SystemAction.lockScreen.appleScriptSource
+
+        XCTAssertTrue(source.contains("control down"))
+        XCTAssertTrue(source.contains("command down"))
+        XCTAssertTrue(source.contains("keystroke \"q\""))
+    }
+}
+
+final class TileSpecActionTests: XCTestCase {
+    func testSystemActionRoundTripsThroughTileSpecJSON() throws {
+        let spec = TileSpec(title: "Lock", symbol: "lock.fill", tint: .gray,
+                            category: "System", action: .system(.lockScreen))
+        let data = try JSONEncoder().encode(spec)
+        let decoded = try JSONDecoder().decode(TileSpec.self, from: data)
+
+        guard case .system(.lockScreen) = decoded.action else {
+            return XCTFail("Expected lock screen system action")
+        }
     }
 }
 
