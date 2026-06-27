@@ -721,6 +721,93 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(recorder.contexts.map(\.action), ["feed"])
     }
 
+    func testNodeServerActionHandlerSendsContextToNodeRunner() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"server":"server.js"}
+        """, extraFiles: ["server.js": ""])
+        let store = DropInAppStore(rootURL: root)
+        let app = try XCTUnwrap(store.app(id: "clock"))
+        let node = URL(fileURLWithPath: "/tmp/fake-node")
+        let runner = NodeRunnerRecorder(output: Data(#"{"ok":true,"items":[1,2]}"#.utf8))
+        let handler = DropInAppNodeServerActionHandler(nodeURL: node,
+                                                       timeout: 3,
+                                                       runner: runner.run)
+        let context = DropInAppServerActionContext(app: app,
+                                                   action: "feed",
+                                                   query: ["limit": "5"],
+                                                   options: ["enabled": true, "token": "secret"],
+                                                   serverModuleURL: app.rootURL.appendingPathComponent("server.js"))
+
+        let result = try XCTUnwrap(handler.handle(context))
+
+        guard case .success(let response) = result else {
+            return XCTFail("Expected successful Node response")
+        }
+        XCTAssertEqual(response.status, 200)
+        XCTAssertEqual(response.contentType, "application/json; charset=utf-8")
+        let responseJSON = try XCTUnwrap(JSONSerialization.jsonObject(with: response.body) as? [String: Any])
+        XCTAssertEqual(responseJSON["ok"] as? Bool, true)
+        XCTAssertEqual(responseJSON["items"] as? [Int], [1, 2])
+
+        XCTAssertEqual(runner.nodeURL, node)
+        XCTAssertEqual(runner.currentDirectoryURL, app.rootURL)
+        XCTAssertEqual(runner.timeout, 3)
+        let input = try XCTUnwrap(runner.inputJSON)
+        XCTAssertEqual(input["appId"] as? String, "clock")
+        XCTAssertEqual(input["action"] as? String, "feed")
+        XCTAssertEqual((input["query"] as? [String: String])?["limit"], "5")
+        let options = try XCTUnwrap(input["options"] as? [String: Any])
+        XCTAssertEqual(options["enabled"] as? Bool, true)
+        XCTAssertEqual(options["token"] as? String, "secret")
+        XCTAssertEqual(input["serverModule"] as? String, app.rootURL.appendingPathComponent("server.js").path)
+    }
+
+    func testNodeServerActionHandlerMapsOkFalseToBadRequest() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"server":"server.js"}
+        """, extraFiles: ["server.js": ""])
+        let app = try XCTUnwrap(DropInAppStore(rootURL: root).app(id: "clock"))
+        let runner = NodeRunnerRecorder(output: Data(#"{"ok":false,"error":"unknown action"}"#.utf8))
+        let handler = DropInAppNodeServerActionHandler(nodeURL: URL(fileURLWithPath: "/tmp/fake-node"),
+                                                       runner: runner.run)
+        let context = DropInAppServerActionContext(app: app,
+                                                   action: "feed",
+                                                   query: [:],
+                                                   options: [:],
+                                                   serverModuleURL: app.rootURL.appendingPathComponent("server.js"))
+
+        let result = try XCTUnwrap(handler.handle(context))
+
+        guard case .success(let response) = result else {
+            return XCTFail("Expected handled Node response")
+        }
+        XCTAssertEqual(response.status, 400)
+        XCTAssertEqual(String(data: response.body, encoding: .utf8), #"{"ok":false,"error":"unknown action"}"#)
+    }
+
+    func testNodeServerActionHandlerReturnsFailureWhenNodeIsUnavailable() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,"server":"server.js"}
+        """, extraFiles: ["server.js": ""])
+        let app = try XCTUnwrap(DropInAppStore(rootURL: root).app(id: "clock"))
+        let handler = DropInAppNodeServerActionHandler(nodeURL: nil)
+        let context = DropInAppServerActionContext(app: app,
+                                                   action: "feed",
+                                                   query: [:],
+                                                   options: [:],
+                                                   serverModuleURL: app.rootURL.appendingPathComponent("server.js"))
+
+        let result = try XCTUnwrap(handler.handle(context))
+
+        guard case .failure(let error) = result else {
+            return XCTFail("Expected missing Node failure")
+        }
+        XCTAssertEqual(error as? DropInAppNodeServerActionError, .nodeUnavailable)
+    }
+
     func testLoopbackServerRejectsActionStyleOpenWithoutRequestingAppReferer() throws {
         let root = temporaryDirectory()
         try writeApp(root: root, folder: "clock", manifest: """
@@ -1279,6 +1366,34 @@ private final class ServerActionRecorder {
         }
         guard let response else { return nil }
         return .success(response)
+    }
+}
+
+private final class NodeRunnerRecorder {
+    private(set) var nodeURL: URL?
+    private(set) var currentDirectoryURL: URL?
+    private(set) var input: Data?
+    private(set) var timeout: TimeInterval?
+    private let output: Data
+
+    init(output: Data) {
+        self.output = output
+    }
+
+    var inputJSON: [String: Any]? {
+        guard let input else { return nil }
+        return try? JSONSerialization.jsonObject(with: input) as? [String: Any]
+    }
+
+    func run(nodeURL: URL,
+             currentDirectoryURL: URL,
+             input: Data,
+             timeout: TimeInterval) -> Result<Data, Error> {
+        self.nodeURL = nodeURL
+        self.currentDirectoryURL = currentDirectoryURL
+        self.input = input
+        self.timeout = timeout
+        return .success(output)
     }
 }
 

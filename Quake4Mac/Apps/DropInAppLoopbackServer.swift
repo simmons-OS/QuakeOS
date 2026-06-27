@@ -44,8 +44,171 @@ struct DropInAppServerActionResponse {
 typealias DropInAppServerActionHandler =
     (DropInAppServerActionContext) -> Result<DropInAppServerActionResponse, Error>?
 
+enum DropInAppNodeServerActionError: LocalizedError, Equatable {
+    case nodeUnavailable
+    case launchFailed(String)
+    case timedOut
+    case executionFailed(String)
+    case invalidResponse(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .nodeUnavailable:
+            return "Node runtime unavailable. Set QUAKEOS_NODE_PATH or install node to enable drop-in server modules."
+        case .launchFailed(let message):
+            return "Could not launch Node runtime: \(message)"
+        case .timedOut:
+            return "Drop-in server module timed out."
+        case .executionFailed(let message):
+            return message.isEmpty ? "Drop-in server module failed." : message
+        case .invalidResponse(let message):
+            return "Drop-in server module returned invalid JSON: \(message)"
+        }
+    }
+}
+
+final class DropInAppNodeServerActionHandler {
+    typealias Runner = (_ nodeURL: URL, _ currentDirectoryURL: URL, _ input: Data, _ timeout: TimeInterval) -> Result<Data, Error>
+
+    static let shared = DropInAppNodeServerActionHandler()
+    static let defaultTimeout: TimeInterval = 12
+
+    private let nodeURL: URL?
+    private let runner: Runner
+    private let timeout: TimeInterval
+
+    init(nodeURL: URL? = DropInAppNodeServerActionHandler.resolveNodeURL(),
+         timeout: TimeInterval = DropInAppNodeServerActionHandler.defaultTimeout,
+         runner: @escaping Runner = { nodeURL, currentDirectoryURL, input, timeout in
+             DropInAppNodeServerActionHandler.runNode(nodeURL: nodeURL,
+                                                      currentDirectoryURL: currentDirectoryURL,
+                                                      input: input,
+                                                      timeout: timeout)
+         }) {
+        self.nodeURL = nodeURL
+        self.timeout = timeout
+        self.runner = runner
+    }
+
+    func handle(_ context: DropInAppServerActionContext) -> Result<DropInAppServerActionResponse, Error>? {
+        guard let nodeURL else { return .failure(DropInAppNodeServerActionError.nodeUnavailable) }
+        do {
+            let input = try inputData(for: context)
+            return runner(nodeURL, context.app.rootURL, input, timeout)
+                .flatMap { output in Self.response(from: output) }
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    static func resolveNodeURL(environment: [String: String] = ProcessInfo.processInfo.environment,
+                               fileManager: FileManager = .default) -> URL? {
+        var candidates: [String] = []
+        if let explicit = environment["QUAKEOS_NODE_PATH"], !explicit.isEmpty {
+            candidates.append(explicit)
+        }
+        candidates.append(contentsOf: ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"])
+        if let path = environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map { "\($0)/node" })
+        }
+
+        for path in candidates where fileManager.isExecutableFile(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+        return nil
+    }
+
+    private func inputData(for context: DropInAppServerActionContext) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "appId": context.app.id,
+            "action": context.action,
+            "query": context.query,
+            "options": context.options,
+            "serverModule": context.serverModuleURL.path
+        ], options: [.sortedKeys])
+    }
+
+    private static func response(from output: Data) -> Result<DropInAppServerActionResponse, Error> {
+        let body = output.isEmpty ? Data("null".utf8) : output
+        do {
+            let object = try JSONSerialization.jsonObject(with: body, options: [.fragmentsAllowed])
+            let status = (object as? [String: Any])?["ok"] as? Bool == false ? 400 : 200
+            return .success(DropInAppServerActionResponse(status: status,
+                                                          contentType: "application/json; charset=utf-8",
+                                                          body: body))
+        } catch {
+            return .failure(DropInAppNodeServerActionError.invalidResponse(error.localizedDescription))
+        }
+    }
+
+    private static func runNode(nodeURL: URL,
+                                currentDirectoryURL: URL,
+                                input: Data,
+                                timeout: TimeInterval) -> Result<Data, Error> {
+        let process = Process()
+        process.executableURL = nodeURL
+        process.currentDirectoryURL = currentDirectoryURL
+        process.arguments = ["-e", bootstrapSource]
+
+        let stdin = Pipe()
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        do {
+            try process.run()
+            stdin.fileHandleForWriting.write(input)
+            try? stdin.fileHandleForWriting.close()
+        } catch {
+            return .failure(DropInAppNodeServerActionError.launchFailed(error.localizedDescription))
+        }
+
+        let finished = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            process.waitUntilExit()
+            finished.signal()
+        }
+
+        guard finished.wait(timeout: .now() + timeout) == .success else {
+            process.terminate()
+            return .failure(DropInAppNodeServerActionError.timedOut)
+        }
+
+        let output = stdout.fileHandleForReading.readDataToEndOfFile()
+        let errorData = stderr.fileHandleForReading.readDataToEndOfFile()
+        guard process.terminationStatus == 0 else {
+            let message = String(data: errorData, encoding: .utf8) ?? ""
+            return .failure(DropInAppNodeServerActionError.executionFailed(message))
+        }
+        return .success(output)
+    }
+
+    private static let bootstrapSource = #"""
+    const fs = require('fs');
+
+    (async () => {
+      const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+      const mod = require(input.serverModule);
+      if (!mod || typeof mod.handle !== 'function') {
+        throw new Error('server module must export handle(action, context)');
+      }
+      const result = await mod.handle(input.action, {
+        appId: input.appId,
+        query: input.query || {},
+        options: input.options || {}
+      });
+      process.stdout.write(JSON.stringify(result === undefined ? null : result));
+    })().catch((error) => {
+      process.stderr.write(error && error.stack ? error.stack : String(error));
+      process.exit(1);
+    });
+    """#
+}
+
 final class DropInAppLoopbackServer: ObservableObject {
-    static let shared = DropInAppLoopbackServer()
+    static let shared = DropInAppLoopbackServer(handleServerAction: DropInAppNodeServerActionHandler.shared.handle)
     static let maxProxyResponseSize = 5 * 1024 * 1024
 
     @Published private(set) var port: UInt16?
