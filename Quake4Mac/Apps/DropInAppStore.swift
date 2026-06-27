@@ -90,6 +90,7 @@ enum DropInAppImportError: LocalizedError, Equatable {
     case invalidSource(String)
     case duplicateID(String)
     case destinationExists(String)
+    case requiresHostCodeConfirmation(String)
     case copyFailed(String)
 
     var errorDescription: String? {
@@ -100,6 +101,8 @@ enum DropInAppImportError: LocalizedError, Equatable {
             return "An app with id \"\(id)\" is already installed."
         case .destinationExists(let folder):
             return "The destination folder \"\(folder)\" already exists."
+        case .requiresHostCodeConfirmation(let name):
+            return "\"\(name)\" contains host-side code. Only import it if you trust the source."
         case .copyFailed(let message):
             return message
         }
@@ -131,6 +134,10 @@ final class DropInAppStore: ObservableObject {
     private let fileManager: FileManager
     private let defaults: UserDefaults
     private static let optionValuesKey = "dropInApps.optionValues"
+    private static let riskyHostCodeExtensions: Set<String> = [
+        "exe", "dll", "com", "scr", "msi", "bat", "cmd", "ps1", "psm1", "vbs", "vbe",
+        "wsf", "wsh", "jar", "sh", "cpl", "command"
+    ]
 
     init(rootURL: URL = DropInAppStore.defaultAppsDirectory(),
          fileManager: FileManager = .default,
@@ -197,7 +204,7 @@ final class DropInAppStore: ObservableObject {
         saveOptionValues()
     }
 
-    func importFolder(at sourceURL: URL) -> Result<DropInAppRecord, DropInAppImportError> {
+    func importFolder(at sourceURL: URL, allowHostCode: Bool = false) -> Result<DropInAppRecord, DropInAppImportError> {
         let source = sourceURL.standardizedFileURL
         switch scan(folder: source) {
         case .failure(let message):
@@ -211,6 +218,9 @@ final class DropInAppStore: ObservableObject {
             let destination = rootURL.appendingPathComponent(record.id, isDirectory: true)
             guard !fileManager.fileExists(atPath: destination.path) else {
                 return .failure(.destinationExists(destination.lastPathComponent))
+            }
+            guard allowHostCode || !record.hasHostCode else {
+                return .failure(.requiresHostCodeConfirmation(record.manifest.name))
             }
 
             do {
@@ -385,13 +395,26 @@ final class DropInAppStore: ObservableObject {
             if let server = manifest.server, Self.containedURL(root: folder, relativePath: server) == nil {
                 return .failure("Server path escapes the app folder.")
             }
+            let hasServerModule = manifest.served && manifest.server != nil
             return .success(DropInAppRecord(manifest: manifest,
                                             rootURL: folder,
                                             manifestURL: manifestURL,
-                                            hasHostCode: manifest.served && manifest.server != nil))
+                                            hasHostCode: hasServerModule || folderContainsExecutableCode(folder)))
         } catch {
             return .failure("Manifest could not be parsed.")
         }
+    }
+
+    private func folderContainsExecutableCode(_ folder: URL) -> Bool {
+        guard let enumerator = fileManager.enumerator(at: folder,
+                                                     includingPropertiesForKeys: [.isRegularFileKey],
+                                                     options: [.skipsHiddenFiles]) else { return false }
+        for case let file as URL in enumerator {
+            guard Self.riskyHostCodeExtensions.contains(file.pathExtension.lowercased()),
+                  (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            return true
+        }
+        return false
     }
 }
 

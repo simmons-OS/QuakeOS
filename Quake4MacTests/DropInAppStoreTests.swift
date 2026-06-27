@@ -304,6 +304,30 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertTrue(store.apps.isEmpty)
     }
 
+    func testImportFolderRequiresConfirmationForHostCode() throws {
+        let root = temporaryDirectory()
+        let sourceRoot = temporaryDirectory()
+        try writeApp(root: sourceRoot, folder: "source", manifest: """
+        {"id":"clock","name":"Clock","entry":"index.html","served":true,"server":"server.js"}
+        """, extraFiles: ["server.js": ""])
+        let source = sourceRoot.appendingPathComponent("source", isDirectory: true)
+        let store = DropInAppStore(rootURL: root)
+
+        let blocked = store.importFolder(at: source)
+
+        XCTAssertEqual(blocked, .failure(.requiresHostCodeConfirmation("Clock")))
+        XCTAssertTrue(store.apps.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock").path))
+
+        let confirmed = store.importFolder(at: source, allowHostCode: true)
+
+        guard case .success(let app) = confirmed else {
+            return XCTFail("Expected confirmed host-code import")
+        }
+        XCTAssertEqual(app.id, "clock")
+        XCTAssertTrue(app.hasHostCode)
+    }
+
     func testRemoveAppDeletesFolderAndSavedOptionValues() throws {
         let root = temporaryDirectory()
         let defaults = temporaryDefaults()
@@ -370,6 +394,17 @@ final class DropInAppStoreTests: XCTestCase {
         try writeApp(root: root, folder: "served", manifest: """
         {"id":"served","entry":"index.html","served":true,"server":"server.js"}
         """, extraFiles: ["server.js": ""])
+
+        let store = DropInAppStore(rootURL: root)
+
+        XCTAssertEqual(store.apps.first?.hasHostCode, true)
+    }
+
+    func testDetectsExecutableFileHostCode() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "scripted", manifest: """
+        {"id":"scripted","entry":"index.html"}
+        """, extraFiles: ["scripts/install.sh": ""])
 
         let store = DropInAppStore(rootURL: root)
 
