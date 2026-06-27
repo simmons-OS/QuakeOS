@@ -86,6 +86,26 @@ struct DropInAppIssue: Identifiable, Equatable {
     let message: String
 }
 
+enum DropInAppImportError: LocalizedError, Equatable {
+    case invalidSource(String)
+    case duplicateID(String)
+    case destinationExists(String)
+    case copyFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidSource(let message):
+            return message
+        case .duplicateID(let id):
+            return "An app with id \"\(id)\" is already installed."
+        case .destinationExists(let folder):
+            return "The destination folder \"\(folder)\" already exists."
+        case .copyFailed(let message):
+            return message
+        }
+    }
+}
+
 final class DropInAppStore: ObservableObject {
     static let shared = DropInAppStore()
 
@@ -114,6 +134,37 @@ final class DropInAppStore: ObservableObject {
             url = components.url ?? url
         }
         return url
+    }
+
+    func importFolder(at sourceURL: URL) -> Result<DropInAppRecord, DropInAppImportError> {
+        let source = sourceURL.standardizedFileURL
+        switch scan(folder: source) {
+        case .failure(let message):
+            return .failure(.invalidSource(message))
+        case .success(let record):
+            refresh()
+            guard !apps.contains(where: { $0.id == record.id }) else {
+                return .failure(.duplicateID(record.id))
+            }
+
+            let destination = rootURL.appendingPathComponent(record.id, isDirectory: true)
+            guard !fileManager.fileExists(atPath: destination.path) else {
+                return .failure(.destinationExists(destination.lastPathComponent))
+            }
+
+            do {
+                try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
+                try fileManager.copyItem(at: source, to: destination)
+            } catch {
+                return .failure(.copyFailed(error.localizedDescription))
+            }
+
+            refresh()
+            if let imported = app(id: record.id) {
+                return .success(imported)
+            }
+            return .failure(.invalidSource("Imported app could not be scanned."))
+        }
     }
 
     func refresh() {

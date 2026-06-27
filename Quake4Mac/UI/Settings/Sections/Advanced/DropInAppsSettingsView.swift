@@ -1,7 +1,10 @@
+import AppKit
 import SwiftUI
 
 struct DropInAppsSettingsView: View {
     @ObservedObject private var store = DropInAppStore.shared
+    @State private var importMessage = ""
+    @State private var importError = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -26,6 +29,10 @@ struct DropInAppsSettingsView: View {
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack {
+                    Button { chooseImportFolder() } label: {
+                        Label("Import Folder", systemImage: "square.and.arrow.down")
+                    }
+                    .buttonStyle(.borderedProminent)
                     Button { NSWorkspace.shared.open(store.rootURL) } label: {
                         Label("Open Folder", systemImage: "folder")
                     }
@@ -33,8 +40,9 @@ struct DropInAppsSettingsView: View {
                     Button { store.refresh() } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                 }
+                importStatus
             }
             .padding(.vertical, 6)
         }
@@ -124,5 +132,38 @@ struct DropInAppsSettingsView: View {
             }
         }
         .padding(.top, store.apps.isEmpty ? 0 : 6)
+    }
+
+    @ViewBuilder private var importStatus: some View {
+        if !importError.isEmpty {
+            Text(importError)
+                .font(.system(size: 11))
+                .foregroundColor(NeonTheme.magenta)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if !importMessage.isEmpty {
+            Text(importMessage)
+                .font(.system(size: 11))
+                .foregroundColor(.green.opacity(0.9))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func chooseImportFolder() {
+        let panel = NSOpenPanel()
+        panel.title = "Import Drop-In App"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        switch store.importFolder(at: url) {
+        case .success(let app):
+            importError = ""
+            importMessage = "Imported \(app.manifest.name)."
+        case .failure(let error):
+            importMessage = ""
+            importError = error.errorDescription ?? "Import failed."
+        }
     }
 }
