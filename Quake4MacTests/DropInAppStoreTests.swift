@@ -298,7 +298,9 @@ final class DropInAppStoreTests: XCTestCase {
          "grid":{"cols":3,"rows":2,"defaults":[
            {"label":"Docs","icon":"🌐","type":"url","value":"https://example.com","w":2},
            {"label":"Count","type":"counter","value":"4"},
-           {"label":"Image","iconType":"image","iconImage":"~/icon.png","type":"text","value":"hello","h":1.5}
+           {"label":"Image","iconType":"image","iconImage":"~/icon.png","type":"text","value":"hello","h":1.5},
+           {"label":"URL Icon","iconType":"url","iconUrl":"https://example.com/icon.png","iconCache":"/tmp/icon.png","type":"text","value":"hello"},
+           {"label":"App Icon","icon":"🚀","iconType":"app","type":"app","value":"com.apple.Safari"}
          ]}}
         """.utf8)
         let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
@@ -321,6 +323,9 @@ final class DropInAppStoreTests: XCTestCase {
 
         XCTAssertEqual(tiles[2].customIcon, .imagePath("~/icon.png"))
         XCTAssertEqual(tiles[2].normalizedRowSpan, 1)
+        XCTAssertEqual(tiles[3].customIcon, .imageURL(url: "https://example.com/icon.png", cachePath: "/tmp/icon.png"))
+        XCTAssertNil(tiles[4].customIcon)
+        XCTAssertEqual(tiles[4].appBundleID, "com.apple.Safari")
         XCTAssertTrue(tiles[5].isEmpty)
     }
 
