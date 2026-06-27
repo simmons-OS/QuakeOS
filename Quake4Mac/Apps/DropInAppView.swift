@@ -335,6 +335,8 @@ private final class DropInTileActionRunner: ObservableObject {
             runAppleScript(source)
         case .system(let action):
             runSystemAction(action)
+        case .luminance(let delta):
+            NotificationCenter.default.post(name: .quakeAdjustLuminanceRequested, object: delta)
         case .openPage(let name):
             NotificationCenter.default.post(name: .quakeOpenPageRequested, object: name)
         case .keyCombo(let combo):
@@ -345,7 +347,7 @@ private final class DropInTileActionRunner: ObservableObject {
             pasteText(text)
         case .macro(let steps):
             runMacro(steps)
-        case .luminance, .counter, .none:
+        case .counter, .none:
             break
         }
     }

@@ -109,6 +109,17 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(model.currentDest, .macroPage("Scenes"))
     }
 
+    func testPadModelAdjustLuminanceUsesInputReader() {
+        let input = QuakeInputReader()
+        let model = PadModel(input: input)
+
+        model.adjustLuminance(by: -26)
+        XCTAssertEqual(input.luminance, 229)
+
+        model.adjustLuminance(by: 500)
+        XCTAssertEqual(input.luminance, 255)
+    }
+
     func testMacroStepJSONDefaultsMissingID() throws {
         let data = #"{"kind":"key","value":"command+p","intValue":0}"#.data(using: .utf8)!
         let step = try JSONDecoder().decode(MacroStep.self, from: data)
