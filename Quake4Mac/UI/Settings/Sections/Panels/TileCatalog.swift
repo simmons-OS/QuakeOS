@@ -23,6 +23,8 @@ struct TileSpec: Codable, Identifiable, Hashable {
     var actStr: String?
     var actInt: Int?
     var actSteps: [MacroStep]?
+    var w: Int?
+    var h: Int?
     var fromSlot: Int? = nil   // set when dragging an existing strip tile (move/swap within a page)
     var editable: Bool = false // custom tiles (user-created) are editable; catalog presets are not
 
@@ -32,6 +34,8 @@ struct TileSpec: Codable, Identifiable, Hashable {
     init(from t: Tile, category: String, app: String? = nil) {
         title = t.title; symbol = t.symbol; image = t.image; customIcon = t.customIcon
         tintHex = t.tint.hexRGB; self.category = category; self.app = app; editable = t.editable
+        w = t.normalizedColumnSpan > 1 ? t.normalizedColumnSpan : nil
+        h = t.normalizedRowSpan > 1 ? t.normalizedRowSpan : nil
         applyAction(t.action)
     }
 
@@ -82,7 +86,8 @@ struct TileSpec: Codable, Identifiable, Hashable {
 
     func makeTile() -> Tile {
         Tile(title: title, symbol: symbol, tint: Color(hexRGB: tintHex), action: action,
-             image: image, editable: editable, customIcon: customIcon?.nonEmpty)
+             image: image, editable: editable, customIcon: customIcon?.nonEmpty,
+             columnSpan: w ?? 1, rowSpan: h ?? 1)
     }
 
     var dragString: String {
