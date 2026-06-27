@@ -138,7 +138,7 @@ final class DropInAppStoreTests: XCTestCase {
         let options = try XCTUnwrap(payload["options"] as? [String: Any])
 
         XCTAssertEqual(payload["app"] as? String, "clock")
-        XCTAssertEqual(api["open"], "/app-api/open?app=clock")
+        XCTAssertEqual(api["open"], "/app-api/open")
         XCTAssertEqual(options["theme"] as? String, "dark")
         XCTAssertEqual(options["seconds"] as? Bool, true)
         XCTAssertNil(options["token"])
@@ -224,6 +224,19 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-api/open?app=Bad&url=https%3A%2F%2Fexample.com"))
         XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-api/open?app=clock&url=file%3A%2F%2F%2Ftmp%2Fsecret"))
         XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-config?app=clock"))
+    }
+
+    func testLoopbackServerParsesAppAPIActionRequests() throws {
+        let target = "/app-api/open?url=https%3A%2F%2Fexample.com%2Fpath%3Fq%3D1"
+        let request = try XCTUnwrap(DropInAppLoopbackServer.appAPIActionRequest(target))
+
+        XCTAssertEqual(request.action, "open")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.com/path?q=1")
+        XCTAssertEqual(DropInAppLoopbackServer.appAPIActionRequest("/app-api/feed")?.action, "feed")
+        XCTAssertNil(DropInAppLoopbackServer.appAPIActionRequest("/app-api/Bad"))
+        XCTAssertNil(DropInAppLoopbackServer.appAPIActionRequest("/app-api/open/extra"))
+        XCTAssertNil(DropInAppLoopbackServer.appAPIActionRequest("/app-api/open?url=file%3A%2F%2F%2Ftmp%2Fsecret")?.url)
+        XCTAssertNil(DropInAppLoopbackServer.appAPIActionRequest("/app-config?app=clock"))
     }
 
     func testLoopbackServerParsesAppProxyTarget() throws {
@@ -350,7 +363,7 @@ final class DropInAppStoreTests: XCTestCase {
             let api = json?["api"] as? [String: String]
             let options = json?["options"] as? [String: Any]
             XCTAssertEqual(json?["app"] as? String, "clock")
-            XCTAssertEqual(api?["open"], "/app-api/open?app=clock")
+            XCTAssertEqual(api?["open"], "/app-api/open")
             XCTAssertEqual(options?["theme"] as? String, "dark")
             XCTAssertEqual(options?["seconds"] as? Bool, true)
             XCTAssertNil(options?["token"])
@@ -541,6 +554,92 @@ final class DropInAppStoreTests: XCTestCase {
             XCTAssertNil(error)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
             XCTAssertEqual(recorder.urls.map(\.absoluteString), ["https://example.com/path?q=1"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerOpensActionStyleSameOriginHTTPURL() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let recorder = URLRecorder()
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root), openURL: recorder.open)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appAPIActionURL(port: port,
+                                                          action: "open",
+                                                          targetURL: "https://example.com/path?q=1"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "action-style app open response")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
+            XCTAssertEqual(recorder.urls.map(\.absoluteString), ["https://example.com/path?q=1"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsActionStyleOpenWithoutRequestingAppReferer() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let recorder = URLRecorder()
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root), openURL: recorder.open)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appAPIActionURL(port: port,
+                                                          action: "open",
+                                                          targetURL: "https://example.com"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        let done = expectation(description: "action-style app open rejection")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
+            XCTAssertTrue(recorder.urls.isEmpty)
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsUnknownAppAPIAction() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """)
+        let recorder = URLRecorder()
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root), openURL: recorder.open)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appAPIActionURL(port: port,
+                                                          action: "feed",
+                                                          targetURL: "https://example.com"))
+        request.httpMethod = "POST"
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "unknown app action rejection")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 404)
+            XCTAssertTrue(recorder.urls.isEmpty)
             done.fulfill()
         }.resume()
 
@@ -895,6 +994,18 @@ final class DropInAppStoreTests: XCTestCase {
         components.path = "/app-api/open"
         components.queryItems = [
             URLQueryItem(name: "app", value: appID),
+            URLQueryItem(name: "url", value: targetURL)
+        ]
+        return try XCTUnwrap(components.url)
+    }
+
+    private func appAPIActionURL(port: UInt16, action: String, targetURL: String) throws -> URL {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = Int(port)
+        components.path = "/app-api/\(action)"
+        components.queryItems = [
             URLQueryItem(name: "url", value: targetURL)
         ]
         return try XCTUnwrap(components.url)

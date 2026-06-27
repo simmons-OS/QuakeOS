@@ -14,6 +14,11 @@ enum DropInAppProxyFetchError: Error {
     case responseTooLarge
 }
 
+struct DropInAppAPIActionRequest: Equatable {
+    let action: String
+    let url: URL?
+}
+
 final class DropInAppLoopbackServer: ObservableObject {
     static let shared = DropInAppLoopbackServer()
     static let maxProxyResponseSize = 5 * 1024 * 1024
@@ -109,6 +114,11 @@ final class DropInAppLoopbackServer: ObservableObject {
             return appOpenResponse(appID: openRequest.appID, url: openRequest.url, request: request)
         }
 
+        if let apiRequest = Self.appAPIActionRequest(target) {
+            guard method == "POST" else { return Self.response(status: 405) }
+            return appAPIActionResponse(apiRequest, request: request)
+        }
+
         if Self.isAppProxyConfigRequest(target) {
             guard method == "GET" else { return Self.response(status: 405) }
             return appProxyConfigResponse(request: request)
@@ -135,6 +145,20 @@ final class DropInAppLoopbackServer: ObservableObject {
             return Self.response(status: 200, body: body, contentType: Self.mimeType(for: fileURL))
         } catch {
             return Self.response(status: (error as NSError).code == NSFileReadNoSuchFileError ? 404 : 500)
+        }
+    }
+
+    private func appAPIActionResponse(_ apiRequest: DropInAppAPIActionRequest, request: String) -> Data {
+        guard Self.isSameOrigin(request: request, port: port),
+              let appID = Self.requestingAppID(request: request, port: port) else { return Self.response(status: 403) }
+        guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
+
+        switch apiRequest.action {
+        case "open":
+            guard let url = apiRequest.url else { return Self.response(status: 400) }
+            return openURL(url) ? Self.response(status: 204) : Self.response(status: 500)
+        default:
+            return Self.response(status: 404)
         }
     }
 
@@ -214,6 +238,16 @@ final class DropInAppLoopbackServer: ObservableObject {
         return appID
     }
 
+    static func appAPIActionRequest(_ target: String) -> DropInAppAPIActionRequest? {
+        guard let components = URLComponents(string: "http://127.0.0.1\(target)") else { return nil }
+        let prefix = "/app-api/"
+        guard components.path.hasPrefix(prefix) else { return nil }
+        let action = String(components.path.dropFirst(prefix.count))
+        guard action.range(of: #"^[a-z0-9][a-z0-9_-]*$"#, options: .regularExpression) != nil else { return nil }
+        return DropInAppAPIActionRequest(action: action,
+                                         url: appAPIURLValue(from: components.queryItems))
+    }
+
     static func isAppProxyConfigRequest(_ target: String) -> Bool {
         guard let components = URLComponents(string: "http://127.0.0.1\(target)") else { return false }
         return components.path == "/app-proxy/config"
@@ -235,12 +269,17 @@ final class DropInAppLoopbackServer: ObservableObject {
               components.path == "/app-api/open",
               let appID = components.queryItems?.first(where: { $0.name == "app" })?.value,
               DropInAppStore.isValidAppID(appID),
-              let target = components.queryItems?.first(where: { $0.name == "url" })?.value,
+              let url = appAPIURLValue(from: components.queryItems) else { return nil }
+        return (appID, url)
+    }
+
+    private static func appAPIURLValue(from queryItems: [URLQueryItem]?) -> URL? {
+        guard let target = queryItems?.first(where: { $0.name == "url" })?.value,
               let url = URL(string: target),
               let scheme = url.scheme?.lowercased(),
               (scheme == "http" || scheme == "https"),
               url.host != nil else { return nil }
-        return (appID, url)
+        return url
     }
 
     static func servedAppRequest(_ target: String) -> (appID: String, relativePath: String)? {
