@@ -136,6 +136,31 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertFalse(store.dashboards[0].actionStrip.isEnabled)
     }
 
+    func testLegacyDashboardJSONLoadsWithDesktopIdentityAndNoExternalLinks() throws {
+        let id = UUID()
+        let file = temporaryFile()
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let json = """
+        [
+          {
+            "id": "\(id.uuidString)",
+            "name": "Legacy",
+            "urlString": "https://legacy.example",
+            "auth": { "kind": "none", "username": "", "headers": [] },
+            "createdAt": "2026-06-26T12:00:00Z",
+            "updatedAt": "2026-06-26T12:00:00Z"
+          }
+        ]
+        """
+        try Data(json.utf8).write(to: file)
+
+        let store = DashboardStore(secretStore: MemoryDashboardSecretStore(), fileURL: file)
+
+        XCTAssertEqual(store.dashboards.count, 1)
+        XCTAssertTrue(store.dashboards[0].browser.useDesktopUserAgent)
+        XCTAssertFalse(store.dashboards[0].browser.openLinksExternally)
+    }
+
     private func temporaryFile() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

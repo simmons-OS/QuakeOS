@@ -91,12 +91,18 @@ struct DashboardActionStrip: Codable, Equatable {
     static let maxActions = 6
 }
 
+struct DashboardBrowserOptions: Codable, Equatable {
+    var openLinksExternally: Bool = false
+    var useDesktopUserAgent: Bool = true
+}
+
 struct DashboardConfig: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
     var urlString: String
     var auth: DashboardAuthConfig = DashboardAuthConfig()
     var actionStrip: DashboardActionStrip = DashboardActionStrip()
+    var browser: DashboardBrowserOptions = DashboardBrowserOptions()
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -111,6 +117,7 @@ struct DashboardConfig: Identifiable, Codable, Equatable {
          urlString: String,
          auth: DashboardAuthConfig = DashboardAuthConfig(),
          actionStrip: DashboardActionStrip = DashboardActionStrip(),
+         browser: DashboardBrowserOptions = DashboardBrowserOptions(),
          createdAt: Date = Date(),
          updatedAt: Date = Date()) {
         self.id = id
@@ -118,12 +125,13 @@ struct DashboardConfig: Identifiable, Codable, Equatable {
         self.urlString = urlString
         self.auth = auth
         self.actionStrip = actionStrip
+        self.browser = browser
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, urlString, auth, actionStrip, createdAt, updatedAt
+        case id, name, urlString, auth, actionStrip, browser, createdAt, updatedAt
     }
 
     init(from decoder: Decoder) throws {
@@ -133,6 +141,7 @@ struct DashboardConfig: Identifiable, Codable, Equatable {
         urlString = try container.decode(String.self, forKey: .urlString)
         auth = try container.decodeIfPresent(DashboardAuthConfig.self, forKey: .auth) ?? DashboardAuthConfig()
         actionStrip = try container.decodeIfPresent(DashboardActionStrip.self, forKey: .actionStrip) ?? DashboardActionStrip()
+        browser = try container.decodeIfPresent(DashboardBrowserOptions.self, forKey: .browser) ?? DashboardBrowserOptions()
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }

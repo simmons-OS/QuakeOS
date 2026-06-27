@@ -99,6 +99,8 @@ struct WebDashboardsSettingsView: View {
                 NeonDivider()
                 labeledTextField("URL", text: $draft.urlString, prompt: "https://home.local:8123")
                 NeonDivider()
+                browserFields
+                NeonDivider()
                 authPicker
                 authFields
                 NeonDivider()
@@ -161,6 +163,18 @@ struct WebDashboardsSettingsView: View {
                 }
             }
         }
+        .padding(.vertical, 9)
+    }
+
+    private var browserFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Open clicked links on this Mac", isOn: $draft.browser.openLinksExternally)
+                .toggleStyle(.switch)
+            Toggle("Use desktop browser identity", isOn: $draft.browser.useDesktopUserAgent)
+                .toggleStyle(.switch)
+        }
+        .font(.system(size: 13))
+        .foregroundColor(NeonTheme.textPrimary)
         .padding(.vertical, 9)
     }
 

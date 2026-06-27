@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import Quake4Mac
 
 final class DashboardAuthPolicyTests: XCTestCase {
@@ -37,5 +38,42 @@ final class DashboardAuthPolicyTests: XCTestCase {
 
         XCTAssertTrue(policy.requestNeedsAuth(URLRequest(url: URL(string: "https://internal.example")!)))
         XCTAssertFalse(policy.requestNeedsAuth(URLRequest(url: URL(string: "https://elsewhere.example")!)))
+    }
+
+    func testDashboardNavigationPolicyOpensLinkClicksExternallyWhenEnabled() {
+        var dashboard = DashboardConfig(name: "Tickets", urlString: "https://tickets.example")
+        dashboard.browser.openLinksExternally = true
+
+        XCTAssertTrue(DashboardNavigationPolicy.shouldOpenExternally(
+            dashboard: dashboard,
+            navigationType: .linkActivated,
+            url: URL(string: "https://tickets.example/case/1")
+        ))
+    }
+
+    func testDashboardNavigationPolicyKeepsLinksInPanelWhenDisabled() {
+        let dashboard = DashboardConfig(name: "Tickets", urlString: "https://tickets.example")
+
+        XCTAssertFalse(DashboardNavigationPolicy.shouldOpenExternally(
+            dashboard: dashboard,
+            navigationType: .linkActivated,
+            url: URL(string: "https://tickets.example/case/1")
+        ))
+    }
+
+    func testDashboardNavigationPolicyIgnoresNonHTTPLinksAndProgrammaticNavigation() {
+        var dashboard = DashboardConfig(name: "Tickets", urlString: "https://tickets.example")
+        dashboard.browser.openLinksExternally = true
+
+        XCTAssertFalse(DashboardNavigationPolicy.shouldOpenExternally(
+            dashboard: dashboard,
+            navigationType: .linkActivated,
+            url: URL(string: "mailto:help@example.com")
+        ))
+        XCTAssertFalse(DashboardNavigationPolicy.shouldOpenExternally(
+            dashboard: dashboard,
+            navigationType: .other,
+            url: URL(string: "https://tickets.example/route")
+        ))
     }
 }

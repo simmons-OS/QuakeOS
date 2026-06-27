@@ -156,8 +156,9 @@ private struct DashboardWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let web = WKWebView(frame: .zero, configuration: Self.configuration())
-        web.customUserAgent = BrowserUserAgent.desktop
+        web.customUserAgent = dashboard.browser.useDesktopUserAgent ? BrowserUserAgent.desktop : nil
         web.navigationDelegate = context.coordinator
+        web.uiDelegate = context.coordinator
         context.coordinator.web = web
         context.coordinator.load()
         return web
@@ -192,7 +193,11 @@ private struct DashboardWebView: NSViewRepresentable {
 
         func update(dashboard: DashboardConfig) {
             guard dashboard != self.dashboard else { return }
+            let previousDesktopUA = self.dashboard.browser.useDesktopUserAgent
             self.dashboard = dashboard
+            if previousDesktopUA != dashboard.browser.useDesktopUserAgent {
+                web?.customUserAgent = dashboard.browser.useDesktopUserAgent ? BrowserUserAgent.desktop : nil
+            }
             loadedDashboardID = nil
             load()
         }
@@ -240,6 +245,18 @@ private struct DashboardWebView: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if DashboardNavigationPolicy.shouldOpenExternally(
+                dashboard: dashboard,
+                navigationType: navigationAction.navigationType,
+                url: navigationAction.request.url
+            ) {
+                if let url = navigationAction.request.url {
+                    NSWorkspace.shared.open(url)
+                }
+                decisionHandler(.cancel)
+                return
+            }
+
             guard let policy, policy.requestNeedsAuth(navigationAction.request) else {
                 decisionHandler(.allow)
                 return
@@ -264,6 +281,38 @@ private struct DashboardWebView: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             NSLog("[Quake] Dashboard provisional load failed: \(error.localizedDescription)")
         }
+    }
+}
+
+extension DashboardWebView.Coordinator: WKUIDelegate {
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard DashboardNavigationPolicy.shouldOpenNewWindowExternally(
+            dashboard: dashboard,
+            url: navigationAction.request.url
+        ), let url = navigationAction.request.url else { return nil }
+        NSWorkspace.shared.open(url)
+        return nil
+    }
+}
+
+enum DashboardNavigationPolicy {
+    static func shouldOpenExternally(dashboard: DashboardConfig, navigationType: WKNavigationType, url: URL?) -> Bool {
+        guard dashboard.browser.openLinksExternally,
+              navigationType == .linkActivated,
+              isHTTPURL(url) else { return false }
+        return true
+    }
+
+    static func shouldOpenNewWindowExternally(dashboard: DashboardConfig, url: URL?) -> Bool {
+        guard dashboard.browser.openLinksExternally,
+              isHTTPURL(url) else { return false }
+        return true
+    }
+
+    private static func isHTTPURL(_ url: URL?) -> Bool {
+        let scheme = url?.scheme?.lowercased()
+        return scheme == "http" || scheme == "https"
     }
 }
 
