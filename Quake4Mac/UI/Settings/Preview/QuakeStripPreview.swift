@@ -193,16 +193,17 @@ struct QuakeStripPreview: View {
     // Each cell is a drop target AND (if it holds a tile) draggable — so you can drag tiles in from
     // the library OR drag an existing tile to another cell to move/swap them.
     @ViewBuilder private func dropCell(index: Int) -> some View {
-        let selected = session.selectedSlot == index
+        let owner = ownerIndex(for: index)
+        let selected = owner != nil && session.selectedSlot == owner
         let base = RoundedRectangle(cornerRadius: 18, style: .continuous)
             .fill(Color.clear)
             .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(selected ? NeonTheme.cyan : Color.clear, lineWidth: 3))   // highlight the tile border
             .contentShape(Rectangle())
-            .onTapGesture { session.select(tileAt(index) != nil ? index : nil) }
+            .onTapGesture { session.select(owner) }
             .dropDestination(for: String.self) { items, _ in handleDrop(items, to: index) }
-        if let t = tileAt(index) {
-            base.draggable(dragSpec(for: t, from: index).dragString) { dragTilePreview(t) }
+        if let owner, let t = tileAt(index) {
+            base.draggable(dragSpec(for: t, from: owner).dragString) { dragTilePreview(t) }
         } else {
             base
         }
@@ -228,9 +229,15 @@ struct QuakeStripPreview: View {
     /// The non-empty draft tile at a slot, or nil.
     private func tileAt(_ index: Int) -> Tile? {
         guard let p = session.index(ofPage: pageName), session.draft.indices.contains(p),
-              session.draft[p].tiles.indices.contains(index) else { return nil }
-        let t = session.draft[p].tiles[index]
+              let owner = session.draft[p].ownerIndex(for: index),
+              session.draft[p].tiles.indices.contains(owner) else { return nil }
+        let t = session.draft[p].tiles[owner]
         return t.title.isEmpty ? nil : t
+    }
+
+    private func ownerIndex(for index: Int) -> Int? {
+        guard let p = session.index(ofPage: pageName), session.draft.indices.contains(p) else { return nil }
+        return session.draft[p].ownerIndex(for: index)
     }
 
     private func dragSpec(for tile: Tile, from index: Int) -> TileSpec {
@@ -242,13 +249,14 @@ struct QuakeStripPreview: View {
     private func handleDrop(_ items: [String], to index: Int) -> Bool {
         guard let s = items.first, let spec = TileSpec.decode(s),
               let page = session.index(ofPage: pageName) else { return false }
-        if let from = spec.fromSlot, from != index {
+        let target = ownerIndex(for: index) ?? index
+        if let from = spec.fromSlot, from != target {
             // Move/swap within the page: dropped tile → here; whatever was here → its old slot.
-            let dest = tileAt(index) ?? PadStore.emptyTile
-            session.setTile(page: page, slot: index, spec.makeTile())
+            let dest = tileAt(target) ?? PadStore.emptyTile
+            session.setTile(page: page, slot: target, spec.makeTile())
             session.setTile(page: page, slot: from, dest)
         } else if spec.fromSlot == nil {
-            session.setTile(page: page, slot: index, spec.makeTile())   // placed from the library
+            session.setTile(page: page, slot: target, spec.makeTile())   // placed from the library
         }
         return true
     }

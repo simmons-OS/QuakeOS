@@ -52,6 +52,7 @@
     color: hsla(0,0%,100%,.7); font-size: 26px; font-weight: 700; line-height: 1; }
   .key.counter .counter-control.minus { left: 28px; }
   .key.counter .counter-control.plus { right: 28px; }
+  .key.span .lbl { font-size: 25px; }
 
   /* Press — their exact active state: scale .98 + soft white halo. */
   .key.pressed { transform: scale(.98); box-shadow: 0 0 20px rgba(255,255,255,.3); }
@@ -132,10 +133,17 @@
     grid.innerHTML = '';
     for (let i = 0; i < 16; i++) {
       const k = p.keys[i];
+      if (k && k.covered) continue;
       const el = document.createElement('div');
       el.className = 'key ' + (k ? (k.app ? 'app' : 'neon') : 'empty');
       el.dataset.idx = i;
+      const c = i % 8, r = Math.floor(i / 8);
+      const w = k && k.w ? Math.max(1, Math.min(8 - c, k.w)) : 1;
+      const h = k && k.h ? Math.max(1, Math.min(2 - r, k.h)) : 1;
+      el.style.gridColumn = (c + 1) + ' / span ' + w;
+      el.style.gridRow = (r + 1) + ' / span ' + h;
       if (k) {
+        if (w > 1 || h > 1) el.classList.add('span');
         const isCounter = typeof k.counter === 'number';
         if (isCounter) el.classList.add('counter');
         setLayers(el, '#7480EF');                           // default until icon samples

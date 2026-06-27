@@ -73,6 +73,7 @@ struct ScreenWebView: NSViewRepresentable {
             enhanced = true
             for (p, page) in pad.pages.enumerated() {
                 for (i, tile) in page.tiles.enumerated() {
+                    guard !page.isCoveredSlot(i) else { continue }
                     guard tile.allowsAutomaticWebIcon, let urlStr = tile.openURLValue,
                           let host = URL(string: urlStr)?.host else { continue }
                     guard let fav = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=128") else { continue }
@@ -138,11 +139,30 @@ struct ScreenWebView: NSViewRepresentable {
 
 enum ScreenModel {
     static func buildModelEnc(pages: [PadPage]) -> String? {
+        let out = buildModel(pages: pages)
+        guard let data = try? JSONSerialization.data(withJSONObject: out, options: []) else { return nil }
+        // Percent-encode so UTF-8 (e.g. the "–" en-dash) survives the JS bridge intact.
+        let json = String(decoding: data, as: UTF8.self)
+        return json.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+    }
+
+    static func buildModel(pages: [PadPage]) -> [[String: Any]] {
         var out: [[String: Any]] = []
         for page in pages {
-            var keys: [[String: Any]] = []
-            for tile in page.tiles {
+            var keys: [Any] = []
+            for i in 0..<PadModel.perPage {
+                if page.isCoveredSlot(i) {
+                    keys.append(["covered": true])
+                    continue
+                }
+                guard let tile = page.tile(at: i), !tile.isEmpty else {
+                    keys.append(NSNull())
+                    continue
+                }
                 var k: [String: Any] = ["title": tile.title]
+                let span = page.tileSpan(at: i)
+                if span.columns > 1 { k["w"] = span.columns }
+                if span.rows > 1 { k["h"] = span.rows }
                 if let counter = tile.counterValue {
                     k["counter"] = counter
                 }
@@ -155,10 +175,7 @@ enum ScreenModel {
             }
             out.append(["name": page.name, "keys": keys])
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: out, options: []) else { return nil }
-        // Percent-encode so UTF-8 (e.g. the "–" en-dash) survives the JS bridge intact.
-        let json = String(decoding: data, as: UTF8.self)
-        return json.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        return out
     }
 
     static func iconInfo(for tile: Tile) -> (url: String, glow: String?, app: Bool)? {

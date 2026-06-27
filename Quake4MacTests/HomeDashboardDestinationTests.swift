@@ -124,6 +124,11 @@ final class MacroActionTests: XCTestCase {
         XCTAssertNil(combo)
     }
 
+    func testCounterDeltaUsesWholeSpannedTile() {
+        XCTAssertEqual(PadModel.counterDelta(forNormalizedPoint: CGPoint(x: 0.02, y: 0.1), ownerIndex: 0, columnSpan: 2), -1)
+        XCTAssertEqual(PadModel.counterDelta(forNormalizedPoint: CGPoint(x: 0.20, y: 0.1), ownerIndex: 0, columnSpan: 2), 1)
+    }
+
     func testLockScreenSystemActionUsesMacShortcut() throws {
         let source = try XCTUnwrap(SystemAction.lockScreen.appleScriptSource)
 
@@ -169,6 +174,18 @@ final class TileSpecActionTests: XCTestCase {
         }
     }
 
+    func testTileSpecCarriesSpanThroughJSON() throws {
+        let tile = Tile(title: "Wide", symbol: "rectangle.fill", tint: .blue, action: .openURL("https://example.com"),
+                        editable: true, columnSpan: 2, rowSpan: 1)
+        let spec = TileSpec(from: tile, category: "Web")
+        let data = try JSONEncoder().encode(spec)
+        let decoded = try JSONDecoder().decode(TileSpec.self, from: data)
+        let made = decoded.makeTile()
+
+        XCTAssertEqual(made.normalizedColumnSpan, 2)
+        XCTAssertEqual(made.normalizedRowSpan, 1)
+    }
+
     func testPasteTextActionRoundTripsThroughTileSpecJSON() throws {
         let spec = TileSpec(title: "Paste", symbol: "doc.on.clipboard", tint: .green,
                             category: "Text", action: .pasteText("Status update"))
@@ -191,6 +208,37 @@ final class TileSpecActionTests: XCTestCase {
             return XCTFail("Expected counter action")
         }
         XCTAssertEqual(value, 7)
+    }
+}
+
+final class TileSpanTests: XCTestCase {
+    func testPadPageResolvesCoveredSlotToSpanOwner() {
+        let page = PadPage(name: "Spans", tiles: [
+            Tile(title: "Wide", symbol: "rectangle.fill", tint: .blue, action: .none, columnSpan: 2, rowSpan: 1),
+            PadStore.emptyTile
+        ])
+
+        XCTAssertEqual(page.ownerIndex(for: 0), 0)
+        XCTAssertEqual(page.ownerIndex(for: 1), 0)
+        XCTAssertTrue(page.isCoveredSlot(1))
+    }
+
+    func testScreenModelEmitsSpanAndCoveredCells() throws {
+        let page = PadPage(name: "Spans", tiles: [
+            Tile(title: "Wide", symbol: "rectangle.fill", tint: .blue, action: .none, columnSpan: 2, rowSpan: 1),
+            PadStore.emptyTile
+        ])
+        let encoded = try XCTUnwrap(ScreenModel.buildModelEnc(pages: [page]))
+        let json = try XCTUnwrap(encoded.removingPercentEncoding)
+        let data = Data(json.utf8)
+        let decoded = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        let keys = try XCTUnwrap(decoded.first?["keys"] as? [Any])
+        let owner = try XCTUnwrap(keys[0] as? [String: Any])
+        let covered = try XCTUnwrap(keys[1] as? [String: Any])
+
+        XCTAssertEqual(owner["title"] as? String, "Wide")
+        XCTAssertEqual(owner["w"] as? Int, 2)
+        XCTAssertEqual(covered["covered"] as? Bool, true)
     }
 }
 
@@ -245,8 +293,9 @@ final class TileIconTests: XCTestCase {
         let json = try XCTUnwrap(encoded.removingPercentEncoding)
         let data = try XCTUnwrap(json.data(using: .utf8))
         let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
-        let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
-        let icon = try XCTUnwrap(keys.first?["icon"] as? String)
+        let keys = try XCTUnwrap(pages.first?["keys"] as? [Any])
+        let first = try XCTUnwrap(keys.first as? [String: Any])
+        let icon = try XCTUnwrap(first["icon"] as? String)
 
         XCTAssertTrue(icon.hasPrefix("data:image/png;base64,"))
     }
@@ -265,8 +314,9 @@ final class TileIconTests: XCTestCase {
         let json = try XCTUnwrap(encoded.removingPercentEncoding)
         let dataJSON = try XCTUnwrap(json.data(using: .utf8))
         let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: dataJSON) as? [[String: Any]])
-        let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
-        let icon = try XCTUnwrap(keys.first?["icon"] as? String)
+        let keys = try XCTUnwrap(pages.first?["keys"] as? [Any])
+        let first = try XCTUnwrap(keys.first as? [String: Any])
+        let icon = try XCTUnwrap(first["icon"] as? String)
 
         XCTAssertTrue(icon.hasPrefix("data:image/png;base64,"))
     }
@@ -277,8 +327,9 @@ final class TileIconTests: XCTestCase {
         let json = try XCTUnwrap(encoded.removingPercentEncoding)
         let data = try XCTUnwrap(json.data(using: .utf8))
         let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
-        let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
-        let counter = try XCTUnwrap(keys.first?["counter"] as? Int)
+        let keys = try XCTUnwrap(pages.first?["keys"] as? [Any])
+        let first = try XCTUnwrap(keys.first as? [String: Any])
+        let counter = try XCTUnwrap(first["counter"] as? Int)
 
         XCTAssertEqual(counter, 7)
     }

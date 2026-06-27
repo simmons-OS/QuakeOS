@@ -386,6 +386,8 @@ struct Tile: Identifiable {
     var image: String? = nil    // DecoKee PNG glyph name (in bundle Icons/), used verbatim when set
     var editable: Bool = false  // false = built-in preset (Safari, Music, …) → action not editable
     var customIcon: TileIcon? = nil
+    var columnSpan: Int = 1
+    var rowSpan: Int = 1
 
     /// Bundle id when this tile launches an app — lets the tile show the real macOS app icon.
     var appBundleID: String? {
@@ -412,6 +414,11 @@ struct Tile: Identifiable {
     var allowsAutomaticWebIcon: Bool {
         customIcon == nil && image == nil
     }
+
+    var normalizedColumnSpan: Int { max(1, min(PadModel.cols, columnSpan)) }
+    var normalizedRowSpan: Int { max(1, min(PadModel.rows, rowSpan)) }
+
+    var isEmpty: Bool { title.isEmpty }
 }
 
 struct PadPage: Identifiable {
@@ -419,6 +426,44 @@ struct PadPage: Identifiable {
     var name: String
     var tiles: [Tile]
     var kind: PadPageKind = .grid
+
+    func tile(at slot: Int) -> Tile? {
+        guard tiles.indices.contains(slot) else { return nil }
+        return tiles[slot]
+    }
+
+    func tileSpan(at owner: Int) -> (columns: Int, rows: Int) {
+        guard let tile = tile(at: owner), !tile.isEmpty else { return (1, 1) }
+        let col = owner % PadModel.cols
+        let row = owner / PadModel.cols
+        let columns = min(tile.normalizedColumnSpan, PadModel.cols - col)
+        let rows = min(tile.normalizedRowSpan, PadModel.rows - row)
+        return (max(1, columns), max(1, rows))
+    }
+
+    func ownerIndex(for slot: Int) -> Int? {
+        guard slot >= 0, slot < PadModel.perPage else { return nil }
+        let targetCol = slot % PadModel.cols
+        let targetRow = slot / PadModel.cols
+        for owner in 0..<min(tiles.count, PadModel.perPage) {
+            guard let tile = tile(at: owner), !tile.isEmpty else { continue }
+            let ownerCol = owner % PadModel.cols
+            let ownerRow = owner / PadModel.cols
+            let span = tileSpan(at: owner)
+            guard span.columns > 1 || span.rows > 1 else { continue }
+            if targetCol >= ownerCol, targetCol < ownerCol + span.columns,
+               targetRow >= ownerRow, targetRow < ownerRow + span.rows {
+                return owner
+            }
+        }
+        if let tile = tile(at: slot), !tile.isEmpty { return slot }
+        return nil
+    }
+
+    func isCoveredSlot(_ slot: Int) -> Bool {
+        guard let owner = ownerIndex(for: slot) else { return false }
+        return owner != slot
+    }
 }
 
 final class PadModel: ObservableObject {
@@ -711,13 +756,14 @@ final class PadModel: ObservableObject {
     private func activate(at p: CGPoint) {
         let col = min(max(Int(p.x * CGFloat(Self.cols)), 0), Self.cols - 1)
         let row = min(max(Int(p.y * CGFloat(Self.rows)), 0), Self.rows - 1)
-        let idx = row * Self.cols + col
+        let rawIndex = row * Self.cols + col
+        let idx = current.ownerIndex(for: rawIndex) ?? rawIndex
         guard idx < current.tiles.count else { return }
         let tile = current.tiles[idx]
         pressedTileID = tile.id
         lastFired = tile.title
         if case .counter = tile.action {
-            let delta = Self.counterDelta(forNormalizedPoint: p)
+            let delta = Self.counterDelta(forNormalizedPoint: p, ownerIndex: idx, columnSpan: current.tileSpan(at: idx).columns)
             if let value = PadStore.shared.adjustCounter(page: pageIndex, slot: idx, delta: delta) {
                 lastFired = "\(tile.title) \(value)"
             }
@@ -735,9 +781,16 @@ final class PadModel: ObservableObject {
     }
 
     static func counterDelta(forNormalizedPoint p: CGPoint) -> Int {
-        let scaledX = min(max(p.x * CGFloat(cols), 0), CGFloat(cols).nextDown)
-        let cellX = scaledX - floor(scaledX)
-        return cellX < 0.5 ? -1 : 1
+        let owner = min(max(Int(p.x * CGFloat(cols)), 0), cols - 1)
+        return counterDelta(forNormalizedPoint: p, ownerIndex: owner, columnSpan: 1)
+    }
+
+    static func counterDelta(forNormalizedPoint p: CGPoint, ownerIndex: Int, columnSpan: Int) -> Int {
+        let span = max(1, min(cols, columnSpan))
+        let ownerCol = min(max(ownerIndex % cols, 0), cols - 1)
+        let scaledX = min(max(p.x * CGFloat(cols), CGFloat(ownerCol)), CGFloat(ownerCol + span).nextDown)
+        let localX = scaledX - CGFloat(ownerCol)
+        return localX < CGFloat(span) / 2 ? -1 : 1
     }
 
     // MARK: Action execution
@@ -944,7 +997,8 @@ final class PadStore: ObservableObject {
         let next = value + delta
         let tile = tiles[slot]
         tiles[slot] = Tile(title: tile.title, symbol: tile.symbol, tint: tile.tint, action: .counter(value: next),
-                           image: tile.image, editable: tile.editable, customIcon: tile.customIcon)
+                           image: tile.image, editable: tile.editable, customIcon: tile.customIcon,
+                           columnSpan: tile.columnSpan, rowSpan: tile.rowSpan)
         pages[page].tiles = tiles
         version += 1
         save()
@@ -1018,13 +1072,18 @@ private struct ActionDTO: Codable {
 private struct TileDTO: Codable {
     var title: String; var symbol: String; var tintHex: String; var image: String?; var action: ActionDTO; var customIcon: TileIcon?
     var editable: Bool?     // optional → old pages.json (without it) still decodes (defaults to preset)
+    var w: Int?
+    var h: Int?
     init(_ t: Tile) {
         title = t.title; symbol = t.symbol; tintHex = t.tint.hexRGB; image = t.image
         action = ActionDTO(t.action); editable = t.editable; customIcon = t.customIcon
+        w = t.normalizedColumnSpan > 1 ? t.normalizedColumnSpan : nil
+        h = t.normalizedRowSpan > 1 ? t.normalizedRowSpan : nil
     }
     func toTile() -> Tile {
         Tile(title: title, symbol: symbol, tint: Color(hexRGB: tintHex), action: action.action,
-             image: image, editable: editable ?? false, customIcon: customIcon?.nonEmpty)
+             image: image, editable: editable ?? false, customIcon: customIcon?.nonEmpty,
+             columnSpan: w ?? 1, rowSpan: h ?? 1)
     }
 }
 private struct PageDTO: Codable {
@@ -1088,13 +1147,15 @@ final class TileEditSession: ObservableObject {
     func setTitleAction(page: Int, slot: Int, title: String, action: PadAction) {
         guard let t0 = tile(page: page, slot: slot) else { return }
         setTile(page: page, slot: slot, Tile(title: title, symbol: t0.symbol, tint: t0.tint, action: action,
-                                             image: t0.image, editable: t0.editable, customIcon: t0.customIcon))
+                                             image: t0.image, editable: t0.editable, customIcon: t0.customIcon,
+                                             columnSpan: t0.columnSpan, rowSpan: t0.rowSpan))
     }
 
     func setCustomIcon(page: Int, slot: Int, customIcon: TileIcon?) {
         guard let t0 = tile(page: page, slot: slot) else { return }
         setTile(page: page, slot: slot, Tile(title: t0.title, symbol: t0.symbol, tint: t0.tint, action: t0.action,
-                                             image: t0.image, editable: t0.editable, customIcon: customIcon?.nonEmpty))
+                                             image: t0.image, editable: t0.editable, customIcon: customIcon?.nonEmpty,
+                                             columnSpan: t0.columnSpan, rowSpan: t0.rowSpan))
     }
 
     func remove(page: Int, slot: Int) {
