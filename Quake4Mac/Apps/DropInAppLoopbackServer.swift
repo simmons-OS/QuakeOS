@@ -12,18 +12,45 @@ enum DropInAppProxyFetchError: Error {
     case timeout
     case nonHTTPResponse
     case responseTooLarge
+    case invalidRedirect
+    case redirectNotAllowed
+    case tooManyRedirects
 }
 
-private final class DropInAppProxyURLSessionDelegate: NSObject, URLSessionDelegate {
+typealias DropInAppProxyRedirectValidator = (URL) -> Bool
+typealias DropInAppProxyFetcher =
+    (URL, Bool, DropInAppProxyRedirectValidator) -> Result<DropInAppProxyResponse, Error>
+
+private enum DropInAppProxyFetchOutcome {
+    case response(DropInAppProxyResponse)
+    case redirect(URL)
+}
+
+private final class DropInAppProxyURLSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate {
+    private let allowsInvalidCertificates: Bool
+
+    init(allowsInvalidCertificates: Bool) {
+        self.allowsInvalidCertificates = allowsInvalidCertificates
+    }
+
     func urlSession(_ session: URLSession,
                     didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+        guard allowsInvalidCertificates,
+              challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = challenge.protectionSpace.serverTrust else {
             completionHandler(.performDefaultHandling, nil)
             return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }
 
@@ -238,6 +265,7 @@ final class DropInAppNodeServerActionHandler {
 
 final class DropInAppLoopbackServer: ObservableObject {
     static let shared = DropInAppLoopbackServer(handleServerAction: DropInAppNodeServerActionHandler.shared.handle)
+    static let maxProxyRedirects = 3
     static let maxProxyResponseSize = 5 * 1024 * 1024
 
     @Published private(set) var port: UInt16?
@@ -245,14 +273,14 @@ final class DropInAppLoopbackServer: ObservableObject {
 
     private let store: DropInAppStore
     private let openURL: (URL) -> Bool
-    private let fetchProxyURL: (URL, Bool) -> Result<DropInAppProxyResponse, Error>
+    private let fetchProxyURL: DropInAppProxyFetcher
     private let handleServerAction: DropInAppServerActionHandler
     private let queue = DispatchQueue(label: "quakeos.dropin.loopback")
     private var listener: NWListener?
 
     init(store: DropInAppStore = .shared,
          openURL: @escaping (URL) -> Bool = DropInAppLoopbackServer.openExternally,
-         fetchProxyURL: @escaping (URL, Bool) -> Result<DropInAppProxyResponse, Error> = DropInAppLoopbackServer.fetchProxyURL,
+         fetchProxyURL: @escaping DropInAppProxyFetcher = DropInAppLoopbackServer.fetchProxyURL,
          handleServerAction: @escaping DropInAppServerActionHandler = { _ in nil }) {
         self.store = store
         self.openURL = openURL
@@ -428,7 +456,9 @@ final class DropInAppLoopbackServer: ObservableObject {
         guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
         guard proxyAllows(app: app, target: target) else { return Self.response(status: 403) }
 
-        switch fetchProxyURL(target, verifySSL(for: app)) {
+        switch fetchProxyURL(target, verifySSL(for: app), { [weak self] redirect in
+            self?.proxyAllows(app: app, target: redirect) ?? false
+        }) {
         case .success(let upstream):
             guard upstream.body.count <= Self.maxProxyResponseSize else { return Self.response(status: 502) }
             return Self.response(status: upstream.status,
@@ -649,7 +679,29 @@ final class DropInAppLoopbackServer: ObservableObject {
         return didOpen
     }
 
-    private static func fetchProxyURL(_ url: URL, verifySSL: Bool = true) -> Result<DropInAppProxyResponse, Error> {
+    private static func fetchProxyURL(_ url: URL,
+                                      verifySSL: Bool,
+                                      allowsRedirect: DropInAppProxyRedirectValidator)
+        -> Result<DropInAppProxyResponse, Error> {
+        var currentURL = url
+        var redirectsRemaining = maxProxyRedirects
+
+        while true {
+            switch fetchSingleProxyURL(currentURL, verifySSL: verifySSL) {
+            case .success(.response(let response)):
+                return .success(response)
+            case .success(.redirect(let redirectURL)):
+                guard redirectsRemaining > 0 else { return .failure(DropInAppProxyFetchError.tooManyRedirects) }
+                guard allowsRedirect(redirectURL) else { return .failure(DropInAppProxyFetchError.redirectNotAllowed) }
+                currentURL = redirectURL
+                redirectsRemaining -= 1
+            case .failure(let error):
+                return .failure(error)
+            }
+        }
+    }
+
+    private static func fetchSingleProxyURL(_ url: URL, verifySSL: Bool) -> Result<DropInAppProxyFetchOutcome, Error> {
         var request = URLRequest(url: url, timeoutInterval: 12)
         request.setValue("QuakeOS/DropInAppProxy", forHTTPHeaderField: "User-Agent")
         request.setValue("application/rss+xml, application/xml, text/xml, text/html, */*",
@@ -658,7 +710,7 @@ final class DropInAppLoopbackServer: ObservableObject {
         defer { session.invalidateAndCancel() }
 
         let semaphore = DispatchSemaphore(value: 0)
-        var result: Result<DropInAppProxyResponse, Error>?
+        var result: Result<DropInAppProxyFetchOutcome, Error>?
         let task = session.dataTask(with: request) { data, response, error in
             defer { semaphore.signal() }
             if let error {
@@ -669,15 +721,24 @@ final class DropInAppLoopbackServer: ObservableObject {
                 result = .failure(DropInAppProxyFetchError.nonHTTPResponse)
                 return
             }
+            if (300..<400).contains(response.statusCode), response.value(forHTTPHeaderField: "Location") != nil {
+                guard let redirectURL = proxyRedirectURL(from: response, relativeTo: url) else {
+                    result = .failure(DropInAppProxyFetchError.invalidRedirect)
+                    return
+                }
+                result = .success(.redirect(redirectURL))
+                return
+            }
             let body = data ?? Data()
             guard body.count <= maxProxyResponseSize else {
                 result = .failure(DropInAppProxyFetchError.responseTooLarge)
                 return
             }
-            result = .success(DropInAppProxyResponse(status: response.statusCode,
-                                                     contentType: response.value(forHTTPHeaderField: "Content-Type")
-                                                        ?? "application/octet-stream",
-                                                     body: body))
+            result = .success(.response(DropInAppProxyResponse(
+                status: response.statusCode,
+                contentType: response.value(forHTTPHeaderField: "Content-Type") ?? "application/octet-stream",
+                body: body
+            )))
         }
         task.resume()
 
@@ -690,10 +751,18 @@ final class DropInAppLoopbackServer: ObservableObject {
 
     private static func proxyURLSession(verifySSL: Bool) -> URLSession {
         let configuration = URLSessionConfiguration.ephemeral
-        guard !verifySSL else { return URLSession(configuration: configuration) }
         return URLSession(configuration: configuration,
-                          delegate: DropInAppProxyURLSessionDelegate(),
+                          delegate: DropInAppProxyURLSessionDelegate(allowsInvalidCertificates: !verifySSL),
                           delegateQueue: nil)
+    }
+
+    private static func proxyRedirectURL(from response: HTTPURLResponse, relativeTo url: URL) -> URL? {
+        guard let location = response.value(forHTTPHeaderField: "Location"),
+              let redirectURL = URL(string: location, relativeTo: url)?.absoluteURL,
+              let scheme = redirectURL.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              redirectURL.host != nil else { return nil }
+        return redirectURL
     }
 
     private static func headerValue(_ name: String, in lines: [String]) -> String? {

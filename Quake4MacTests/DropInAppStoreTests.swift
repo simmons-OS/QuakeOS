@@ -710,6 +710,43 @@ final class DropInAppStoreTests: XCTestCase {
         wait(for: [done], timeout: 3)
     }
 
+    func testLoopbackServerProxyAppliesAllowlistToRedirects() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,
+         "proxy":{"methods":["GET"],"allow":[{"pattern":"^https://api\\\\.example\\\\.com/"}]}}
+        """)
+        let allowedRedirect = try XCTUnwrap(URL(string: "https://api.example.com/next"))
+        let rejectedRedirect = try XCTUnwrap(URL(string: "https://evil.example.com/data"))
+        let fetcher = ProxyFetchRecorder(
+            response: DropInAppProxyResponse(
+                status: 200,
+                contentType: "application/json",
+                body: Data(#"{"ok":true}"#.utf8)
+            ),
+            redirectChecksToRun: [allowedRedirect, rejectedRedirect]
+        )
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root),
+                                             fetchProxyURL: fetcher.fetch)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appProxyURL(port: port, targetURL: "https://api.example.com/data"))
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "app proxy response")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            XCTAssertEqual(fetcher.redirectCheckResults, [true, false])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
     func testLoopbackServerRejectsDisallowedProxyRequest() throws {
         let root = temporaryDirectory()
         try writeApp(root: root, folder: "clock", manifest: """
@@ -1651,10 +1688,13 @@ private final class ProxyFetchRecorder {
     private let lock = NSLock()
     private var recordedURLs: [URL] = []
     private var recordedVerifySSLValues: [Bool] = []
+    private var recordedRedirectCheckResults: [Bool] = []
     private let response: DropInAppProxyResponse
+    private let redirectChecksToRun: [URL]
 
-    init(response: DropInAppProxyResponse) {
+    init(response: DropInAppProxyResponse, redirectChecksToRun: [URL] = []) {
         self.response = response
+        self.redirectChecksToRun = redirectChecksToRun
     }
 
     var urls: [URL] {
@@ -1669,10 +1709,20 @@ private final class ProxyFetchRecorder {
         return recordedVerifySSLValues
     }
 
-    func fetch(_ url: URL, verifySSL: Bool) -> Result<DropInAppProxyResponse, Error> {
+    var redirectCheckResults: [Bool] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedRedirectCheckResults
+    }
+
+    func fetch(_ url: URL,
+               verifySSL: Bool,
+               allowsRedirect: DropInAppProxyRedirectValidator) -> Result<DropInAppProxyResponse, Error> {
+        let redirectCheckResults = redirectChecksToRun.map(allowsRedirect)
         lock.lock()
         recordedURLs.append(url)
         recordedVerifySSLValues.append(verifySSL)
+        recordedRedirectCheckResults.append(contentsOf: redirectCheckResults)
         lock.unlock()
         return .success(response)
     }
