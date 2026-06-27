@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WebKit
 
@@ -11,7 +12,9 @@ struct DropInStaticAppScreenView: View {
             if app.manifest.served {
                 servedApp(app)
             } else if let url = store.staticLaunchURL(for: app) {
-                DropInStaticAppWebView(entryURL: url, readAccessURL: app.rootURL)
+                appRuntime(app) {
+                    DropInStaticAppWebView(entryURL: url, readAccessURL: app.rootURL)
+                }
             } else {
                 DashboardFallbackView(title: "Invalid App Entry", detail: app.manifest.entry)
             }
@@ -23,14 +26,272 @@ struct DropInStaticAppScreenView: View {
     @ViewBuilder private func servedApp(_ app: DropInAppRecord) -> some View {
         if let port = loopback.port,
            let url = store.servedLaunchURL(for: app, port: port) {
-            DropInServedAppWebView(entryURL: url)
-                .onAppear { loopback.start() }
+            appRuntime(app) {
+                DropInServedAppWebView(entryURL: url)
+                    .onAppear { loopback.start() }
+            }
         } else if !loopback.lastError.isEmpty {
             DashboardFallbackView(title: "Served App Failed", detail: loopback.lastError)
                 .onAppear { loopback.start() }
         } else {
             DashboardFallbackView(title: "Starting Served App", detail: app.manifest.name)
                 .onAppear { loopback.start() }
+        }
+    }
+
+    @ViewBuilder private func appRuntime<Content: View>(_ app: DropInAppRecord,
+                                                        @ViewBuilder content: () -> Content) -> some View {
+        if let grid = app.manifest.grid {
+            let tiles = grid.nativeTiles()
+            if tiles.contains(where: { !$0.isEmpty }) {
+                DropInGridRuntimeView(grid: grid, tiles: tiles, content: content)
+                    .ignoresSafeArea()
+            } else {
+                content()
+            }
+        } else {
+            content()
+        }
+    }
+}
+
+struct DropInGridTileFrame: Identifiable {
+    let id: Int
+    let tile: Tile
+    let column: Int
+    let row: Int
+    let columnSpan: Int
+    let rowSpan: Int
+}
+
+enum DropInGridTileLayout {
+    static func frames(for tiles: [Tile], columns: Int, rows: Int) -> [DropInGridTileFrame] {
+        let columns = max(1, columns)
+        let rows = max(1, rows)
+        let totalSlots = columns * rows
+        var covered = Set<Int>()
+        var frames: [DropInGridTileFrame] = []
+
+        for index in 0..<min(tiles.count, totalSlots) {
+            guard !covered.contains(index) else { continue }
+            let tile = tiles[index]
+            let column = index % columns
+            let row = index / columns
+            let columnSpan = min(max(1, tile.columnSpan), columns - column)
+            let rowSpan = min(max(1, tile.rowSpan), rows - row)
+            frames.append(DropInGridTileFrame(id: index,
+                                              tile: tile,
+                                              column: column,
+                                              row: row,
+                                              columnSpan: columnSpan,
+                                              rowSpan: rowSpan))
+
+            guard !tile.isEmpty else { continue }
+            for coveredRow in row..<(row + rowSpan) {
+                for coveredColumn in column..<(column + columnSpan) {
+                    covered.insert(coveredRow * columns + coveredColumn)
+                }
+            }
+        }
+
+        return frames
+    }
+}
+
+private struct DropInGridRuntimeView<Content: View>: View {
+    let grid: DropInAppGridConfig
+    let tiles: [Tile]
+    let content: Content
+    @StateObject private var actionRunner = DropInTileActionRunner()
+
+    init(grid: DropInAppGridConfig, tiles: [Tile], @ViewBuilder content: () -> Content) {
+        self.grid = grid
+        self.tiles = tiles
+        self.content = content()
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let columns = displayColumns
+            let rows = displayRows
+            let stripWidth = min(geo.size.width * 0.58, CGFloat(columns) * max(72, geo.size.height / CGFloat(rows)))
+
+            HStack(spacing: 0) {
+                content
+                DropInGridActionStripView(tiles: Array(tiles.prefix(columns * rows)),
+                                          columns: columns,
+                                          rows: rows,
+                                          actionRunner: actionRunner)
+                    .frame(width: stripWidth)
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
+
+    private var displayColumns: Int {
+        max(1, min(3, grid.cols))
+    }
+
+    private var displayRows: Int {
+        max(1, min(6, grid.rows))
+    }
+}
+
+private struct DropInGridActionStripView: View {
+    let tiles: [Tile]
+    let columns: Int
+    let rows: Int
+    @ObservedObject var actionRunner: DropInTileActionRunner
+
+    var body: some View {
+        GeometryReader { geo in
+            let gap: CGFloat = 10
+            let cellWidth = (geo.size.width - gap * CGFloat(max(0, columns - 1))) / CGFloat(columns)
+            let cellHeight = (geo.size.height - gap * CGFloat(max(0, rows - 1))) / CGFloat(rows)
+
+            ZStack(alignment: .topLeading) {
+                ForEach(DropInGridTileLayout.frames(for: tiles, columns: columns, rows: rows)) { frame in
+                    let width = cellWidth * CGFloat(frame.columnSpan) + gap * CGFloat(max(0, frame.columnSpan - 1))
+                    let height = cellHeight * CGFloat(frame.rowSpan) + gap * CGFloat(max(0, frame.rowSpan - 1))
+                    DropInGridTileButton(tile: frame.tile, actionRunner: actionRunner)
+                        .frame(width: width, height: height)
+                        .position(x: CGFloat(frame.column) * (cellWidth + gap) + width / 2,
+                                  y: CGFloat(frame.row) * (cellHeight + gap) + height / 2)
+                }
+            }
+        }
+        .padding(10)
+        .background(
+            LinearGradient(colors: [Color(red: 0.05, green: 0.09, blue: 0.14),
+                                    Color(red: 0.01, green: 0.02, blue: 0.04)],
+                           startPoint: .topLeading,
+                           endPoint: .bottomTrailing)
+        )
+    }
+}
+
+private struct DropInGridTileButton: View {
+    let tile: Tile
+    @ObservedObject var actionRunner: DropInTileActionRunner
+
+    var body: some View {
+        if tile.isEmpty {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        } else {
+            Button { actionRunner.run(tile.action) } label: {
+                VStack(spacing: 8) {
+                    TileGlyphView(symbol: tile.symbol,
+                                  image: tile.image,
+                                  tint: tile.tint,
+                                  appBundleID: tile.appBundleID,
+                                  url: tile.openURLValue,
+                                  size: 64,
+                                  customIcon: tile.customIcon)
+                    Text(tile.title)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.86))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                        .minimumScaleFactor(0.65)
+                    if let value = tile.counterValue {
+                        Text("\(value)")
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(
+                    LinearGradient(colors: [Color.white.opacity(0.10), Color.white.opacity(0.04)],
+                                   startPoint: .topLeading,
+                                   endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 8)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(tile.tint.opacity(0.38), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+@MainActor
+private final class DropInTileActionRunner: ObservableObject {
+    private var macroBusy = false
+
+    func run(_ action: PadAction) {
+        switch action {
+        case .launchApp(let bundleID):
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
+                NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            }
+        case .openURL(let value):
+            if let url = URL(string: value) { NSWorkspace.shared.open(url) }
+        case .openPath(let path):
+            let expanded = (path as NSString).expandingTildeInPath
+            NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
+        case .shell(let command):
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/zsh")
+            process.arguments = ["-lc", command]
+            try? process.run()
+        case .appleScript(let source):
+            runAppleScript(source)
+        case .system(let action):
+            runSystemAction(action)
+        case .keyCombo(let combo):
+            if let source = MacroKeyCombo.appleScriptSource(for: combo) { runAppleScript(source) }
+        case .typeText(let text):
+            runAppleScript(MacroText.appleScriptSource(for: text))
+        case .pasteText(let text):
+            pasteText(text)
+        case .macro(let steps):
+            runMacro(steps)
+        case .luminance, .openPage, .counter, .none:
+            break
+        }
+    }
+
+    private func runAppleScript(_ source: String) {
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
+    }
+
+    private func runSystemAction(_ action: SystemAction) {
+        switch action {
+        case .lockScreen:
+            if let source = action.appleScriptSource { runAppleScript(source) }
+        case .openSettings:
+            NotificationCenter.default.post(name: .quakeOpenSettingsRequested, object: nil)
+        }
+    }
+
+    private func pasteText(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        if let source = MacroKeyCombo.appleScriptSource(for: "command+v") {
+            runAppleScript(source)
+        }
+    }
+
+    private func runMacro(_ steps: [MacroStep]) {
+        guard !macroBusy else { return }
+        macroBusy = true
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { macroBusy = false }
+            for step in steps {
+                if step.kind == .delay {
+                    try? await Task.sleep(nanoseconds: UInt64(step.delayMilliseconds) * 1_000_000)
+                } else if let action = step.padAction {
+                    run(action)
+                }
+            }
         }
     }
 }
