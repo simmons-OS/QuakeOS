@@ -14,11 +14,157 @@ import Combine
 enum PadAction {
     case launchApp(bundleID: String)   // open an app by bundle identifier
     case openURL(String)               // open a URL in the default browser
+    case openPath(String)              // open a local file or folder
     case shell(String)                 // run a shell command (/bin/zsh -lc)
     case appleScript(String)           // run an AppleScript snippet
     case luminance(delta: Int)         // nudge the Quake panel backlight
     case openPage(String)              // jump to another Quake page (by name)
+    case keyCombo(String)              // send a key combo to the focused app via System Events
+    case typeText(String)              // type literal text into the focused app
+    case macro([MacroStep])            // run ordered macro steps without overlap
     case none
+}
+
+enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
+    case key
+    case text
+    case delay
+    case app
+    case url
+    case openPath
+    case shell
+    case appleScript
+    case page
+    case brightness
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .key: return "Keystroke"
+        case .text: return "Type Text"
+        case .delay: return "Delay"
+        case .app: return "Open App"
+        case .url: return "Open URL"
+        case .openPath: return "Open File/Folder"
+        case .shell: return "Shell"
+        case .appleScript: return "AppleScript"
+        case .page: return "Go to Page"
+        case .brightness: return "Brightness"
+        }
+    }
+}
+
+struct MacroStep: Identifiable, Codable, Hashable {
+    private enum CodingKeys: String, CodingKey { case id, kind, value, intValue }
+
+    var id: UUID = UUID()
+    var kind: MacroStepKind = .delay
+    var value: String = ""
+    var intValue: Int = 250
+
+    static let maxDelayMs = 60_000
+
+    init(id: UUID = UUID(), kind: MacroStepKind = .delay, value: String = "", intValue: Int = 250) {
+        self.id = id
+        self.kind = kind
+        self.value = value
+        self.intValue = intValue
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decodeIfPresent(MacroStepKind.self, forKey: .kind) ?? .delay
+        value = try container.decodeIfPresent(String.self, forKey: .value) ?? ""
+        intValue = try container.decodeIfPresent(Int.self, forKey: .intValue) ?? MacroStep.defaultStep(kind: kind).intValue
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+    }
+
+    static func defaultStep(kind: MacroStepKind = .delay) -> MacroStep {
+        switch kind {
+        case .delay:
+            return MacroStep(kind: .delay, value: "", intValue: 250)
+        case .brightness:
+            return MacroStep(kind: .brightness, value: "", intValue: 26)
+        default:
+            return MacroStep(kind: kind, value: "", intValue: 0)
+        }
+    }
+
+    var delayMilliseconds: Int {
+        min(Self.maxDelayMs, max(0, intValue))
+    }
+
+    var padAction: PadAction? {
+        switch kind {
+        case .key: return .keyCombo(value)
+        case .text: return .typeText(value)
+        case .delay: return nil
+        case .app: return .launchApp(bundleID: value)
+        case .url: return .openURL(value)
+        case .openPath: return .openPath(value)
+        case .shell: return .shell(value)
+        case .appleScript: return .appleScript(value)
+        case .page: return .openPage(value)
+        case .brightness: return .luminance(delta: intValue)
+        }
+    }
+}
+
+enum MacroKeyCombo {
+    private static let modifierNames: [String: String] = [
+        "command": "command down", "cmd": "command down", "meta": "command down", "win": "command down",
+        "control": "control down", "ctrl": "control down",
+        "option": "option down", "opt": "option down", "alt": "option down",
+        "shift": "shift down"
+    ]
+
+    private static let keyCodes: [String: Int] = [
+        "return": 36, "enter": 36, "tab": 48, "space": 49,
+        "delete": 51, "backspace": 51, "escape": 53, "esc": 53,
+        "left": 123, "right": 124, "down": 125, "up": 126,
+        "home": 115, "end": 119, "pageup": 116, "page up": 116, "pagedown": 121, "page down": 121,
+        "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
+        "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111
+    ]
+
+    static func appleScriptSource(for combo: String) -> String? {
+        let tokens = combo.split(separator: "+")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        guard !tokens.isEmpty else { return nil }
+
+        var modifiers: [String] = []
+        var key: String?
+        for token in tokens {
+            if let modifier = modifierNames[token] {
+                if !modifiers.contains(modifier) { modifiers.append(modifier) }
+            } else {
+                key = token
+            }
+        }
+        guard let key else { return nil }
+
+        let usingClause = modifiers.isEmpty ? "" : " using {\(modifiers.joined(separator: ", "))}"
+        if let code = keyCodes[key] {
+            return "tell application \"System Events\" to key code \(code)\(usingClause)"
+        }
+        if key.count == 1 {
+            return "tell application \"System Events\" to keystroke \"\(MacroText.escapedAppleScriptString(key))\"\(usingClause)"
+        }
+        return nil
+    }
+}
+
+enum MacroText {
+    static func escapedAppleScriptString(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    static func appleScriptSource(for text: String) -> String {
+        "tell application \"System Events\" to keystroke \"\(escapedAppleScriptString(text))\""
+    }
 }
 
 // A page can be a tile grid (the default), a live web dashboard, or a bundled "app" screen
@@ -58,6 +204,11 @@ struct Tile: Identifiable {
         if case let .openURL(u) = action { return u }
         return nil
     }
+
+    var macroStepCount: Int? {
+        if case .macro(let steps) = action { return steps.count }
+        return nil
+    }
 }
 
 struct PadPage: Identifiable {
@@ -78,6 +229,7 @@ final class PadModel: ObservableObject {
 
     private unowned let input: QuakeInputReader
     private var storeSub: AnyCancellable?
+    private var macroBusy = false
 
     /// Pages come from the shared, persisted store so the device, the settings preview, and the
     /// Tile Editor all stay in sync; edits there re-render the pad live.
@@ -377,20 +529,48 @@ final class PadModel: ObservableObject {
             }
         case .openURL(let s):
             if let u = URL(string: s) { NSWorkspace.shared.open(u) }
+        case .openPath(let path):
+            let expanded = (path as NSString).expandingTildeInPath
+            NSWorkspace.shared.open(URL(fileURLWithPath: expanded))
         case .shell(let c):
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/zsh")
             p.arguments = ["-lc", c]
             try? p.run()
         case .appleScript(let src):
-            var err: NSDictionary?
-            NSAppleScript(source: src)?.executeAndReturnError(&err)
+            runAppleScript(src)
         case .luminance(let d):
             input.setLuminance(input.luminance + d)
         case .openPage(let name):
             if let i = pages.firstIndex(where: { $0.name == name }) { pageIndex = i }
+        case .keyCombo(let combo):
+            if let source = MacroKeyCombo.appleScriptSource(for: combo) { runAppleScript(source) }
+        case .typeText(let text):
+            runAppleScript(MacroText.appleScriptSource(for: text))
+        case .macro(let steps):
+            runMacro(steps)
         case .none:
             break
+        }
+    }
+
+    private func runAppleScript(_ source: String) {
+        var err: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&err)
+    }
+
+    private func runMacro(_ steps: [MacroStep]) {
+        guard !macroBusy else { return }
+        macroBusy = true
+        Task { [weak self] in
+            for step in steps {
+                if step.kind == .delay {
+                    try? await Task.sleep(nanoseconds: UInt64(step.delayMilliseconds) * 1_000_000)
+                } else if let action = step.padAction {
+                    await MainActor.run { self?.run(action) }
+                }
+            }
+            await MainActor.run { self?.macroBusy = false }
         }
     }
 
@@ -537,15 +717,19 @@ final class PadStore: ObservableObject {
 // MARK: - Codable DTOs (Color → hex, PadAction flattened)
 
 private struct ActionDTO: Codable {
-    var kind: String; var s: String?; var i: Int?
+    var kind: String; var s: String?; var i: Int?; var steps: [MacroStep]?
     init(_ a: PadAction) {
         switch a {
         case .launchApp(let b):   kind = "app";     s = b
         case .openURL(let u):     kind = "url";     s = u
+        case .openPath(let p):    kind = "open";    s = p
         case .shell(let c):       kind = "shell";   s = c
         case .appleScript(let x): kind = "ascript"; s = x
         case .luminance(let d):   kind = "lum";     i = d
         case .openPage(let n):    kind = "page";    s = n
+        case .keyCombo(let k):    kind = "key";     s = k
+        case .typeText(let t):    kind = "text";    s = t
+        case .macro(let m):       kind = "macro";   steps = m
         case .none:               kind = "none"
         }
     }
@@ -553,10 +737,14 @@ private struct ActionDTO: Codable {
         switch kind {
         case "app":     return .launchApp(bundleID: s ?? "")
         case "url":     return .openURL(s ?? "")
+        case "open":    return .openPath(s ?? "")
         case "shell":   return .shell(s ?? "")
         case "ascript": return .appleScript(s ?? "")
         case "lum":     return .luminance(delta: i ?? 0)
         case "page":    return .openPage(s ?? "")
+        case "key":     return .keyCombo(s ?? "")
+        case "text":    return .typeText(s ?? "")
+        case "macro":   return .macro(steps ?? [])
         default:        return .none
         }
     }
