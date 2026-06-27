@@ -194,6 +194,7 @@ struct TileInspectorRail: View {
         case "open":    return ("Opens a file or folder", str)
         case "key":     return ("Sends a keystroke", str)
         case "text":    return ("Types text", str)
+        case "paste":   return ("Pastes text", str)
         case "shell":   return ("Runs a shell command", str)
         case "ascript": return ("Runs an AppleScript", str)
         case "system":
@@ -259,6 +260,7 @@ struct TileInspectorRail: View {
         case "page":    return .openPage(eValue)
         case "key":     return .keyCombo(eValue)
         case "text":    return .typeText(eValue)
+        case "paste":   return .pasteText(eValue)
         case "macro":   return .macro(eSteps)
         default:        return .none
         }
@@ -296,6 +298,7 @@ struct TileInspectorRail: View {
         case .openPage(let n):    eKind = "page";    eValue = n
         case .keyCombo(let k):    eKind = "key";     eValue = k
         case .typeText(let t):    eKind = "text";    eValue = t
+        case .pasteText(let t):   eKind = "paste";   eValue = t
         case .macro(let steps):   eKind = "macro";   eSteps = steps
         case .none:               eKind = "none"
         }
@@ -399,6 +402,7 @@ struct TileInspectorRail: View {
                         Picker("", selection: $eKind) {
                             Text("None").tag("none"); Text("Open App").tag("app"); Text("Open URL").tag("url")
                             Text("Open File/Folder").tag("open"); Text("Keystroke").tag("key"); Text("Type Text").tag("text")
+                            Text("Paste Text").tag("paste")
                             Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("Lock Screen").tag("system")
                             Text("Brightness").tag("lum")
                             Text("Go to Page").tag("page"); Text("Macro Steps").tag("macro")
@@ -452,6 +456,8 @@ struct TileInspectorRail: View {
         case "key":
             labeledField("Keystroke", placeholder: "command+shift+p")
         case "text":
+            labeledField("Text", placeholder: "Meeting notes")
+        case "paste":
             labeledField("Text", placeholder: "Meeting notes")
         case "shell":
             labeledField("Command", placeholder: "open ~/Downloads")
@@ -689,6 +695,7 @@ struct TileInspectorRail: View {
         switch kind {
         case .key: return "command+shift+p"
         case .text: return "Meeting notes"
+        case .pasteText: return "Meeting notes"
         case .app: return "com.apple.Safari"
         case .url: return "https://example.com"
         case .openPath: return "~/Downloads"

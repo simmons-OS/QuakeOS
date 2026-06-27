@@ -56,6 +56,15 @@ final class MacroActionTests: XCTestCase {
         }
     }
 
+    func testMacroStepMapsPasteTextToPadAction() {
+        let step = MacroStep(kind: .pasteText, value: "Status update", intValue: 0)
+
+        guard case .pasteText(let text)? = step.padAction else {
+            return XCTFail("Expected paste text action")
+        }
+        XCTAssertEqual(text, "Status update")
+    }
+
     func testMacroStepJSONDefaultsMissingID() throws {
         let data = #"{"kind":"key","value":"command+p","intValue":0}"#.data(using: .utf8)!
         let step = try JSONDecoder().decode(MacroStep.self, from: data)
@@ -101,6 +110,18 @@ final class TileSpecActionTests: XCTestCase {
         guard case .system(.lockScreen) = decoded.action else {
             return XCTFail("Expected lock screen system action")
         }
+    }
+
+    func testPasteTextActionRoundTripsThroughTileSpecJSON() throws {
+        let spec = TileSpec(title: "Paste", symbol: "doc.on.clipboard", tint: .green,
+                            category: "Text", action: .pasteText("Status update"))
+        let data = try JSONEncoder().encode(spec)
+        let decoded = try JSONDecoder().decode(TileSpec.self, from: data)
+
+        guard case .pasteText(let text) = decoded.action else {
+            return XCTFail("Expected paste text action")
+        }
+        XCTAssertEqual(text, "Status update")
     }
 }
 
