@@ -84,6 +84,31 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(text, "Status update")
     }
 
+    func testPadModelOpenPageLeavesCurrentAppDestination() {
+        let originalPages = PadStore.shared.pages
+        let originalLastNav = UserDefaults.standard.object(forKey: "nav.last")
+        defer {
+            PadStore.shared.replace(originalPages)
+            if let originalLastNav {
+                UserDefaults.standard.set(originalLastNav, forKey: "nav.last")
+            } else {
+                UserDefaults.standard.removeObject(forKey: "nav.last")
+            }
+        }
+        PadStore.shared.replace([
+            PadPage(name: "Apps", tiles: []),
+            PadPage(name: "Scenes", tiles: [])
+        ])
+        let model = PadModel(input: QuakeInputReader())
+        model.openApp(.dropInApp("clock"))
+
+        model.openPage(named: "Scenes")
+
+        XCTAssertFalse(model.onHome)
+        XCTAssertEqual(model.pageIndex, 1)
+        XCTAssertEqual(model.currentDest, .macroPage("Scenes"))
+    }
+
     func testMacroStepJSONDefaultsMissingID() throws {
         let data = #"{"kind":"key","value":"command+p","intValue":0}"#.data(using: .utf8)!
         let step = try JSONDecoder().decode(MacroStep.self, from: data)
