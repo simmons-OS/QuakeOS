@@ -199,6 +199,7 @@ struct SettingsRootView: View {
             case .rgbRing:  RGBRingView()
             case .reactive: ReactiveLightingView()
             case .webDashboards: WebDashboardsSettingsView()
+            case .apps: DropInAppsSettingsView()
             default:        PlaceholderSectionView(section: s)
             }
         }

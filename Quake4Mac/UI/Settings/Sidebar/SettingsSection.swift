@@ -66,7 +66,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     var badge: String? {
         switch self {
         case .panelCreator, .tileEditor:        return "Beta"
-        case .aiVoice, .apps:                   return "Soon"
+        case .aiVoice:                          return "Soon"
         default:                                return nil
         }
     }
