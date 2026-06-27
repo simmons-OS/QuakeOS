@@ -324,6 +324,14 @@ final class DropInAppStore: ObservableObject {
         ]
     }
 
+    func proxyConfigPayload(for app: DropInAppRecord) -> [String: Any] {
+        [
+            "app": app.id,
+            "api": Self.clientAPIPaths(for: app),
+            "options": resolvedOptionValues(for: app)
+        ]
+    }
+
     func optionValue(appID: String, option: DropInAppOption) -> String {
         guard Self.isClientOption(option) else {
             return (try? secretStore.get(appID: appID, field: option.key)) ?? option.defaultValue ?? ""
@@ -526,6 +534,9 @@ final class DropInAppStore: ObservableObject {
 
     static func clientAPIPaths(for app: DropInAppRecord) -> [String: String] {
         var paths = ["open": "/app-api/open?app=\(app.id)"]
+        if app.manifest.served {
+            paths["config"] = "/app-proxy/config"
+        }
         if app.manifest.proxy != nil {
             paths["proxy"] = "/app-proxy"
         }
@@ -581,6 +592,15 @@ final class DropInAppStore: ObservableObject {
     private enum ScanResult {
         case success(DropInAppRecord)
         case failure(String)
+    }
+
+    private func resolvedOptionValues(for app: DropInAppRecord) -> [String: Any] {
+        var resolved: [String: Any] = [:]
+        for option in app.manifest.options {
+            let value = optionValue(appID: app.id, option: option)
+            resolved[option.key] = Self.isBooleanOption(option) ? value == "true" : value
+        }
+        return resolved
     }
 
     private func saveOptionValues() {
