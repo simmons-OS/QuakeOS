@@ -114,6 +114,42 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.optionValue(appID: "clock", option: option), "light")
     }
 
+    func testCounterValuesPersistByAppIDAndSlot() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+
+        XCTAssertEqual(store.counterValue(appID: "clock", slot: 2, defaultValue: 4), 4)
+        XCTAssertEqual(store.adjustCounter(appID: "clock", slot: 2, defaultValue: 4, delta: 1), 5)
+        XCTAssertEqual(store.adjustCounter(appID: "clock", slot: 2, defaultValue: 4, delta: -2), 3)
+        let reloaded = DropInAppStore(rootURL: root, defaults: defaults)
+
+        XCTAssertEqual(reloaded.counterValue(appID: "clock", slot: 2, defaultValue: 4), 3)
+        XCTAssertEqual(reloaded.counterValuesByAppID["clock"], ["2": 3])
+    }
+
+    func testRemoveAppDeletesSavedCounterValues() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html"}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        let app = try XCTUnwrap(store.apps.first)
+        store.setCounterValue(appID: app.id, slot: 1, value: 7)
+
+        switch store.removeApp(id: app.id) {
+        case .success:
+            break
+        case .failure(let error):
+            XCTFail("Expected removal to succeed, got \(error)")
+        }
+        let reloaded = DropInAppStore(rootURL: root, defaults: defaults)
+
+        XCTAssertNil(reloaded.counterValuesByAppID[app.id])
+        XCTAssertEqual(reloaded.counterValue(appID: app.id, slot: 1, defaultValue: 2), 2)
+    }
+
     func testSecretAndServerOnlyOptionValuesPersistOutsideDefaults() throws {
         let root = temporaryDirectory()
         let defaults = temporaryDefaults()

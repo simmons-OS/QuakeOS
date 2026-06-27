@@ -44,7 +44,7 @@ struct DropInStaticAppScreenView: View {
         if let grid = app.manifest.grid {
             let tiles = grid.nativeTiles()
             if tiles.contains(where: { !$0.isEmpty }) {
-                DropInGridRuntimeView(grid: grid, tiles: tiles, content: content)
+                DropInGridRuntimeView(appID: app.id, grid: grid, tiles: tiles, store: store, content: content)
                     .ignoresSafeArea()
             } else {
                 content()
@@ -99,14 +99,22 @@ enum DropInGridTileLayout {
 }
 
 private struct DropInGridRuntimeView<Content: View>: View {
+    let appID: String
     let grid: DropInAppGridConfig
     let tiles: [Tile]
+    @ObservedObject var store: DropInAppStore
     let content: Content
     @StateObject private var actionRunner = DropInTileActionRunner()
 
-    init(grid: DropInAppGridConfig, tiles: [Tile], @ViewBuilder content: () -> Content) {
+    init(appID: String,
+         grid: DropInAppGridConfig,
+         tiles: [Tile],
+         store: DropInAppStore,
+         @ViewBuilder content: () -> Content) {
+        self.appID = appID
         self.grid = grid
         self.tiles = tiles
+        self.store = store
         self.content = content()
     }
 
@@ -118,9 +126,11 @@ private struct DropInGridRuntimeView<Content: View>: View {
 
             HStack(spacing: 0) {
                 content
-                DropInGridActionStripView(tiles: Array(tiles.prefix(columns * rows)),
+                DropInGridActionStripView(appID: appID,
+                                          tiles: Array(tiles.prefix(columns * rows)),
                                           columns: columns,
                                           rows: rows,
+                                          store: store,
                                           actionRunner: actionRunner)
                     .frame(width: stripWidth)
             }
@@ -138,9 +148,11 @@ private struct DropInGridRuntimeView<Content: View>: View {
 }
 
 private struct DropInGridActionStripView: View {
+    let appID: String
     let tiles: [Tile]
     let columns: Int
     let rows: Int
+    @ObservedObject var store: DropInAppStore
     @ObservedObject var actionRunner: DropInTileActionRunner
 
     var body: some View {
@@ -153,7 +165,11 @@ private struct DropInGridActionStripView: View {
                 ForEach(DropInGridTileLayout.frames(for: tiles, columns: columns, rows: rows)) { frame in
                     let width = cellWidth * CGFloat(frame.columnSpan) + gap * CGFloat(max(0, frame.columnSpan - 1))
                     let height = cellHeight * CGFloat(frame.rowSpan) + gap * CGFloat(max(0, frame.rowSpan - 1))
-                    DropInGridTileButton(tile: frame.tile, actionRunner: actionRunner)
+                    DropInGridTileButton(appID: appID,
+                                         slot: frame.id,
+                                         tile: frame.tile,
+                                         store: store,
+                                         actionRunner: actionRunner)
                         .frame(width: width, height: height)
                         .position(x: CGFloat(frame.column) * (cellWidth + gap) + width / 2,
                                   y: CGFloat(frame.row) * (cellHeight + gap) + height / 2)
@@ -171,7 +187,10 @@ private struct DropInGridActionStripView: View {
 }
 
 private struct DropInGridTileButton: View {
+    let appID: String
+    let slot: Int
     let tile: Tile
+    @ObservedObject var store: DropInAppStore
     @ObservedObject var actionRunner: DropInTileActionRunner
 
     var body: some View {
@@ -179,6 +198,12 @@ private struct DropInGridTileButton: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.white.opacity(0.12), style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
                 .background(Color.white.opacity(0.03), in: RoundedRectangle(cornerRadius: 8))
+        } else if let defaultValue = tile.counterValue {
+            DropInGridCounterTile(appID: appID,
+                                  slot: slot,
+                                  tile: tile,
+                                  defaultValue: defaultValue,
+                                  store: store)
         } else {
             Button { actionRunner.run(tile.action) } label: {
                 VStack(spacing: 8) {
@@ -217,6 +242,72 @@ private struct DropInGridTileButton: View {
             }
             .buttonStyle(.plain)
         }
+    }
+}
+
+private struct DropInGridCounterTile: View {
+    let appID: String
+    let slot: Int
+    let tile: Tile
+    let defaultValue: Int
+    @ObservedObject var store: DropInAppStore
+
+    private var value: Int {
+        store.counterValue(appID: appID, slot: slot, defaultValue: defaultValue)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            counterButton(symbol: "minus") {
+                store.adjustCounter(appID: appID, slot: slot, defaultValue: defaultValue, delta: -1)
+            }
+            VStack(spacing: 6) {
+                TileGlyphView(symbol: tile.symbol,
+                              image: tile.image,
+                              tint: tile.tint,
+                              appBundleID: tile.appBundleID,
+                              url: tile.openURLValue,
+                              size: 52,
+                              customIcon: tile.customIcon)
+                Text(tile.title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.80))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.65)
+                Text("\(value)")
+                    .font(.system(size: 28, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            counterButton(symbol: "plus") {
+                store.adjustCounter(appID: appID, slot: slot, defaultValue: defaultValue, delta: 1)
+            }
+        }
+        .background(
+            LinearGradient(colors: [Color.white.opacity(0.10), Color.white.opacity(0.04)],
+                           startPoint: .topLeading,
+                           endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(tile.tint.opacity(0.38), lineWidth: 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func counterButton(symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.white.opacity(0.82))
+                .frame(width: 34)
+                .frame(maxHeight: .infinity)
+                .background(Color.white.opacity(0.07))
+        }
+        .buttonStyle(.plain)
     }
 }
 
