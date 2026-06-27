@@ -12,6 +12,7 @@ import IOKit.pwr_mgt
 extension Notification.Name {
     static let quakeOpenSettingsRequested = Notification.Name("quakeOpenSettingsRequested")
     static let quakeOpenPageRequested = Notification.Name("quakeOpenPageRequested")
+    static let quakeAdjustLuminanceRequested = Notification.Name("quakeAdjustLuminanceRequested")
 }
 
 // MARK: - App-wide state

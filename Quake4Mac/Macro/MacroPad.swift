@@ -479,6 +479,7 @@ final class PadModel: ObservableObject {
     private unowned let input: QuakeInputReader
     private var storeSub: AnyCancellable?
     private var pageRequestObserver: NSObjectProtocol?
+    private var luminanceRequestObserver: NSObjectProtocol?
     private var macroBusy = false
 
     /// Pages come from the shared, persisted store so the device, the settings preview, and the
@@ -494,12 +495,21 @@ final class PadModel: ObservableObject {
             guard let pageName = notification.object as? String else { return }
             self?.openPage(named: pageName)
         }
+        luminanceRequestObserver = NotificationCenter.default.addObserver(
+            forName: .quakeAdjustLuminanceRequested, object: nil, queue: .main
+        ) { [weak self] notification in
+            guard let delta = notification.object as? Int else { return }
+            self?.adjustLuminance(by: delta)
+        }
         applyStartup()
     }
 
     deinit {
         if let pageRequestObserver {
             NotificationCenter.default.removeObserver(pageRequestObserver)
+        }
+        if let luminanceRequestObserver {
+            NotificationCenter.default.removeObserver(luminanceRequestObserver)
         }
     }
 
@@ -574,6 +584,10 @@ final class PadModel: ObservableObject {
     func openPage(named name: String) {
         guard pages.contains(where: { $0.name == name }) else { return }
         openApp(.macroPage(name))
+    }
+
+    func adjustLuminance(by delta: Int) {
+        input.setLuminance(input.luminance + delta)
     }
 
     // MARK: App switcher (knob-driven recents carousel)
@@ -835,7 +849,7 @@ final class PadModel: ObservableObject {
         case .system(let action):
             runSystemAction(action)
         case .luminance(let d):
-            input.setLuminance(input.luminance + d)
+            adjustLuminance(by: d)
         case .openPage(let name):
             openPage(named: name)
         case .keyCombo(let combo):
