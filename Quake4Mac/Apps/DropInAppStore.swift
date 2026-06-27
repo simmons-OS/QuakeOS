@@ -135,13 +135,26 @@ final class DropInAppStore: ObservableObject {
     func staticLaunchURL(for app: DropInAppRecord) -> URL? {
         guard !app.manifest.served,
               var url = Self.containedURL(root: app.rootURL, relativePath: app.manifest.entry) else { return nil }
-        if let fragment = Self.staticOptionsFragment(for: app.manifest.options,
-                                                     values: optionValuesByAppID[app.id] ?? [:]),
+        if let fragment = Self.clientOptionsQuery(for: app.manifest.options,
+                                                  values: optionValuesByAppID[app.id] ?? [:]),
            var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             components.percentEncodedFragment = fragment
             url = components.url ?? url
         }
         return url
+    }
+
+    func servedLaunchURL(for app: DropInAppRecord, port: UInt16) -> URL? {
+        guard app.manifest.served,
+              Self.containedURL(root: app.rootURL, relativePath: app.manifest.entry) != nil else { return nil }
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = Int(port)
+        components.percentEncodedPath = "/apps/\(app.id)/\(Self.percentEncodedPath(app.manifest.entry))"
+        components.percentEncodedQuery = Self.clientOptionsQuery(for: app.manifest.options,
+                                                                 values: optionValuesByAppID[app.id] ?? [:])
+        return components.url
     }
 
     func optionValue(appID: String, option: DropInAppOption) -> String {
@@ -265,6 +278,11 @@ final class DropInAppStore: ObservableObject {
 
     static func staticOptionsFragment(for options: [DropInAppOption],
                                       values: [String: String] = [:]) -> String? {
+        clientOptionsQuery(for: options, values: values)
+    }
+
+    static func clientOptionsQuery(for options: [DropInAppOption],
+                                   values: [String: String] = [:]) -> String? {
         let queryItems = options.compactMap { option -> URLQueryItem? in
             guard isClientOption(option), let value = values[option.key] ?? option.defaultValue else { return nil }
             return URLQueryItem(name: option.key, value: value)
@@ -277,6 +295,17 @@ final class DropInAppStore: ObservableObject {
 
     private static func isClientOption(_ option: DropInAppOption) -> Bool {
         option.type != "secret" && !option.serverOnly
+    }
+
+    static func percentEncodedPath(_ path: String) -> String {
+        var allowed = CharacterSet.urlPathAllowed
+        allowed.remove(charactersIn: "/?#")
+        return path.replacingOccurrences(of: "\\", with: "/")
+            .split(separator: "/", omittingEmptySubsequences: false)
+            .map { component in
+                String(component).addingPercentEncoding(withAllowedCharacters: allowed) ?? String(component)
+            }
+            .joined(separator: "/")
     }
 
     private enum ScanResult {
