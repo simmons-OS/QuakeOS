@@ -39,6 +39,36 @@ struct DropInAppOption: Decodable, Equatable, Identifiable {
     }
 }
 
+struct DropInAppProxyAllowRule: Decodable, Equatable {
+    let option: String?
+    let pattern: String?
+}
+
+struct DropInAppProxyConfig: Decodable, Equatable {
+    let methods: [String]?
+    let allow: [DropInAppProxyAllowRule]
+    let verifySslOption: String?
+
+    private enum CodingKeys: String, CodingKey {
+        case methods, allow, verifySslOption
+    }
+
+    init(methods: [String]? = nil,
+         allow: [DropInAppProxyAllowRule] = [],
+         verifySslOption: String? = nil) {
+        self.methods = methods
+        self.allow = allow
+        self.verifySslOption = verifySslOption
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        methods = try c.decodeIfPresent([String].self, forKey: .methods)
+        allow = try c.decodeIfPresent([DropInAppProxyAllowRule].self, forKey: .allow) ?? []
+        verifySslOption = try c.decodeIfPresent(String.self, forKey: .verifySslOption)
+    }
+}
+
 struct DropInAppManifest: Decodable, Equatable, Identifiable {
     let id: String
     let name: String
@@ -46,19 +76,21 @@ struct DropInAppManifest: Decodable, Equatable, Identifiable {
     let served: Bool
     let options: [DropInAppOption]
     let server: String?
+    let proxy: DropInAppProxyConfig?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, entry, file, served, options, server
+        case id, name, entry, file, served, options, server, proxy
     }
 
     init(id: String, name: String? = nil, entry: String, served: Bool = false,
-         options: [DropInAppOption] = [], server: String? = nil) {
+         options: [DropInAppOption] = [], server: String? = nil, proxy: DropInAppProxyConfig? = nil) {
         self.id = id
         self.name = name ?? id
         self.entry = entry
         self.served = served
         self.options = options
         self.server = server
+        self.proxy = proxy
     }
 
     init(from decoder: Decoder) throws {
@@ -70,6 +102,7 @@ struct DropInAppManifest: Decodable, Equatable, Identifiable {
         served = try c.decodeIfPresent(Bool.self, forKey: .served) ?? false
         options = try c.decodeIfPresent([DropInAppOption].self, forKey: .options) ?? []
         server = try c.decodeIfPresent(String.self, forKey: .server)
+        proxy = try c.decodeIfPresent(DropInAppProxyConfig.self, forKey: .proxy)
     }
 }
 
@@ -492,7 +525,11 @@ final class DropInAppStore: ObservableObject {
     }
 
     static func clientAPIPaths(for app: DropInAppRecord) -> [String: String] {
-        ["open": "/app-api/open?app=\(app.id)"]
+        var paths = ["open": "/app-api/open?app=\(app.id)"]
+        if app.manifest.proxy != nil {
+            paths["proxy"] = "/app-proxy"
+        }
+        return paths
     }
 
     static func staticOptionsFragment(for options: [DropInAppOption],
