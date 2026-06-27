@@ -77,6 +77,65 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertEqual(store.dashboards.count, 2)
     }
 
+    func testSideActionValidationRequiresURLForURLActions() {
+        var dashboard = DashboardConfig(name: "Home", urlString: "https://home.example")
+        dashboard.actionStrip.isEnabled = true
+        dashboard.actionStrip.actions = [
+            DashboardSideAction(title: "Scene", symbol: "bolt.fill", kind: .openURL, urlString: "not-a-url")
+        ]
+
+        let errors = DashboardStore.validate(dashboard, secrets: .empty, requireSecrets: false)
+
+        XCTAssertTrue(errors.contains(.invalidActionURL("Scene")))
+    }
+
+    func testSideActionValidationRequiresAtLeastOneActionWhenEnabled() {
+        var dashboard = DashboardConfig(name: "Home", urlString: "https://home.example")
+        dashboard.actionStrip.isEnabled = true
+
+        let errors = DashboardStore.validate(dashboard, secrets: .empty, requireSecrets: false)
+
+        XCTAssertTrue(errors.contains(.missingSideAction))
+    }
+
+    func testSideActionValidationAllowsDashboardControlsWithoutURLs() {
+        var dashboard = DashboardConfig(name: "Home", urlString: "https://home.example")
+        dashboard.actionStrip.isEnabled = true
+        dashboard.actionStrip.actions = [
+            .defaultAction(kind: .reload),
+            .defaultAction(kind: .home)
+        ]
+
+        let errors = DashboardStore.validate(dashboard, secrets: .empty, requireSecrets: false)
+
+        XCTAssertFalse(errors.contains(.invalidActionURL("Reload")))
+        XCTAssertTrue(errors.isEmpty)
+    }
+
+    func testLegacyDashboardJSONLoadsWithoutActionStrip() throws {
+        let id = UUID()
+        let file = temporaryFile()
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let json = """
+        [
+          {
+            "id": "\(id.uuidString)",
+            "name": "Legacy",
+            "urlString": "https://legacy.example",
+            "auth": { "kind": "none", "username": "", "headers": [] },
+            "createdAt": "2026-06-26T12:00:00Z",
+            "updatedAt": "2026-06-26T12:00:00Z"
+          }
+        ]
+        """
+        try Data(json.utf8).write(to: file)
+
+        let store = DashboardStore(secretStore: MemoryDashboardSecretStore(), fileURL: file)
+
+        XCTAssertEqual(store.dashboards.count, 1)
+        XCTAssertFalse(store.dashboards[0].actionStrip.isEnabled)
+    }
+
     private func temporaryFile() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

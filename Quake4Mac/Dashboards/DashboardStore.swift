@@ -31,11 +31,72 @@ struct DashboardAuthConfig: Codable, Equatable {
     var headers: [DashboardHeader] = []
 }
 
+enum DashboardActionStripSide: String, Codable, CaseIterable, Identifiable {
+    case left
+    case right
+
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
+}
+
+enum DashboardSideActionKind: String, Codable, CaseIterable, Identifiable {
+    case reload
+    case back
+    case forward
+    case home
+    case openURL
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .reload: return "Reload"
+        case .back: return "Back"
+        case .forward: return "Forward"
+        case .home: return "Home"
+        case .openURL: return "Open URL"
+        }
+    }
+
+    var defaultSymbol: String {
+        switch self {
+        case .reload: return "arrow.clockwise"
+        case .back: return "chevron.left"
+        case .forward: return "chevron.right"
+        case .home: return "house.fill"
+        case .openURL: return "link"
+        }
+    }
+}
+
+struct DashboardSideAction: Identifiable, Codable, Equatable {
+    var id: UUID = UUID()
+    var title: String
+    var symbol: String
+    var kind: DashboardSideActionKind
+    var urlString: String = ""
+
+    var url: URL? { URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) }
+
+    static func defaultAction(kind: DashboardSideActionKind = .reload) -> DashboardSideAction {
+        DashboardSideAction(title: kind.title, symbol: kind.defaultSymbol, kind: kind)
+    }
+}
+
+struct DashboardActionStrip: Codable, Equatable {
+    var isEnabled: Bool = false
+    var side: DashboardActionStripSide = .right
+    var actions: [DashboardSideAction] = []
+
+    static let maxActions = 6
+}
+
 struct DashboardConfig: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String
     var urlString: String
     var auth: DashboardAuthConfig = DashboardAuthConfig()
+    var actionStrip: DashboardActionStrip = DashboardActionStrip()
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
@@ -43,6 +104,37 @@ struct DashboardConfig: Identifiable, Codable, Equatable {
 
     var host: String? {
         url?.host?.lowercased()
+    }
+
+    init(id: UUID = UUID(),
+         name: String,
+         urlString: String,
+         auth: DashboardAuthConfig = DashboardAuthConfig(),
+         actionStrip: DashboardActionStrip = DashboardActionStrip(),
+         createdAt: Date = Date(),
+         updatedAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.urlString = urlString
+        self.auth = auth
+        self.actionStrip = actionStrip
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, urlString, auth, actionStrip, createdAt, updatedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        urlString = try container.decode(String.self, forKey: .urlString)
+        auth = try container.decodeIfPresent(DashboardAuthConfig.self, forKey: .auth) ?? DashboardAuthConfig()
+        actionStrip = try container.decodeIfPresent(DashboardActionStrip.self, forKey: .actionStrip) ?? DashboardActionStrip()
+        createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? createdAt
     }
 }
 
@@ -71,6 +163,10 @@ enum DashboardValidationError: LocalizedError, Hashable {
     case missingHeader
     case missingHeaderName
     case missingHeaderValue(String)
+    case missingSideAction
+    case tooManyActions
+    case missingActionTitle
+    case invalidActionURL(String)
 
     var errorDescription: String? {
         switch self {
@@ -82,6 +178,10 @@ enum DashboardValidationError: LocalizedError, Hashable {
         case .missingHeader: return "At least one header is required."
         case .missingHeaderName: return "Header name is required."
         case .missingHeaderValue(let name): return "\(name) value is required."
+        case .missingSideAction: return "At least one side action is required."
+        case .tooManyActions: return "Side actions are limited to six buttons."
+        case .missingActionTitle: return "Action title is required."
+        case .invalidActionURL(let title): return "\(title) needs a valid http or https URL."
         }
     }
 }
@@ -131,6 +231,13 @@ final class DashboardStore: ObservableObject {
         var next = dashboard
         next.name = next.name.trimmingCharacters(in: .whitespacesAndNewlines)
         next.urlString = next.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        next.actionStrip.actions = next.actionStrip.actions.map { action in
+            var copy = action
+            copy.title = copy.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            copy.symbol = copy.symbol.trimmingCharacters(in: .whitespacesAndNewlines)
+            copy.urlString = copy.urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+            return copy
+        }
         next.updatedAt = Date()
 
         try cleanupSecretsBeforeSave(existing: self.dashboard(id: next.id), next: next)
@@ -242,6 +349,27 @@ final class DashboardStore: ObservableObject {
                     errors.append(.missingHeaderName)
                 } else if requireSecrets && (secrets.headerValues[header.id] ?? "").isEmpty {
                     errors.append(.missingHeaderValue(name))
+                }
+            }
+        }
+
+        if dashboard.actionStrip.isEnabled {
+            if dashboard.actionStrip.actions.isEmpty {
+                errors.append(.missingSideAction)
+            } else if dashboard.actionStrip.actions.count > DashboardActionStrip.maxActions {
+                errors.append(.tooManyActions)
+            }
+            for action in dashboard.actionStrip.actions {
+                let title = action.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                if title.isEmpty {
+                    errors.append(.missingActionTitle)
+                }
+                if action.kind == .openURL {
+                    let url = action.url
+                    let scheme = url?.scheme?.lowercased()
+                    if url?.host == nil || !(scheme == "http" || scheme == "https") {
+                        errors.append(.invalidActionURL(title.isEmpty ? action.kind.title : title))
+                    }
                 }
             }
         }

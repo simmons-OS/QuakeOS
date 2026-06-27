@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import Combine
 
 struct DashboardScreenView: View {
     let dashboardID: UUID
@@ -12,7 +13,7 @@ struct DashboardScreenView: View {
             } else if let authError = authError(for: dashboard) {
                 DashboardFallbackView(title: "Dashboard Auth Needed", detail: authError)
             } else {
-                DashboardWebView(dashboard: dashboard)
+                DashboardRuntimeView(dashboard: dashboard)
                     .ignoresSafeArea()
             }
         } else {
@@ -27,6 +28,84 @@ struct DashboardScreenView: View {
         } catch {
             return "Open Settings to update credentials."
         }
+    }
+}
+
+private final class DashboardWebCommandCenter: ObservableObject {
+    let actions = PassthroughSubject<DashboardSideAction, Never>()
+
+    func send(_ action: DashboardSideAction) {
+        actions.send(action)
+    }
+}
+
+private struct DashboardRuntimeView: View {
+    let dashboard: DashboardConfig
+    @StateObject private var commandCenter = DashboardWebCommandCenter()
+
+    var body: some View {
+        if dashboard.actionStrip.isEnabled, !dashboard.actionStrip.actions.isEmpty {
+            GeometryReader { geo in
+                let columns = stripColumns(for: dashboard.actionStrip.actions.count)
+                let width = min(geo.size.width * 0.42, CGFloat(columns) * max(120, geo.size.height / 2))
+
+                HStack(spacing: 0) {
+                    if dashboard.actionStrip.side == .left {
+                        DashboardActionStripView(dashboard: dashboard, commandCenter: commandCenter, columns: columns)
+                            .frame(width: width)
+                    }
+                    DashboardWebView(dashboard: dashboard, commandCenter: commandCenter)
+                    if dashboard.actionStrip.side == .right {
+                        DashboardActionStripView(dashboard: dashboard, commandCenter: commandCenter, columns: columns)
+                            .frame(width: width)
+                    }
+                }
+            }
+        } else {
+            DashboardWebView(dashboard: dashboard, commandCenter: commandCenter)
+        }
+    }
+
+    private func stripColumns(for count: Int) -> Int {
+        min(3, max(1, Int(ceil(Double(count) / 2.0))))
+    }
+}
+
+private struct DashboardActionStripView: View {
+    let dashboard: DashboardConfig
+    @ObservedObject var commandCenter: DashboardWebCommandCenter
+    let columns: Int
+
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 10), count: columns), spacing: 10) {
+            ForEach(dashboard.actionStrip.actions) { action in
+                Button { commandCenter.send(action) } label: {
+                    VStack(spacing: 8) {
+                        Image(systemName: action.symbol.isEmpty ? action.kind.defaultSymbol : action.symbol)
+                            .font(.system(size: 24, weight: .semibold))
+                            .frame(height: 30)
+                        Text(action.title)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(2)
+                            .multilineTextAlignment(.center)
+                            .minimumScaleFactor(0.72)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 92)
+                    .padding(.horizontal, 8)
+                    .background(Color.white.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.cyan.opacity(0.35), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.white)
+            }
+        }
+        .padding(10)
+        .frame(maxHeight: .infinity, alignment: .center)
+        .background(Color.black.opacity(0.94))
     }
 }
 
@@ -67,11 +146,12 @@ struct DashboardFallbackView: View {
     }
 }
 
-struct DashboardWebView: NSViewRepresentable {
+private struct DashboardWebView: NSViewRepresentable {
     let dashboard: DashboardConfig
+    @ObservedObject var commandCenter: DashboardWebCommandCenter
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(dashboard: dashboard)
+        Coordinator(dashboard: dashboard, commandCenter: commandCenter)
     }
 
     func makeNSView(context: Context) -> WKWebView {
@@ -98,11 +178,16 @@ struct DashboardWebView: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate {
         weak var web: WKWebView?
         private var dashboard: DashboardConfig
+        private var commandCenter: DashboardWebCommandCenter
         private var policy: DashboardAuthPolicy?
         private var loadedDashboardID: UUID?
+        private var actionSub: AnyCancellable?
 
-        init(dashboard: DashboardConfig) {
+        init(dashboard: DashboardConfig, commandCenter: DashboardWebCommandCenter) {
             self.dashboard = dashboard
+            self.commandCenter = commandCenter
+            super.init()
+            bindActions()
         }
 
         func update(dashboard: DashboardConfig) {
@@ -112,8 +197,10 @@ struct DashboardWebView: NSViewRepresentable {
             load()
         }
 
-        func load() {
-            guard loadedDashboardID != dashboard.id, let web else { return }
+        func load(force: Bool = false) {
+            guard let web else { return }
+            if force { loadedDashboardID = nil }
+            guard loadedDashboardID != dashboard.id else { return }
             loadedDashboardID = dashboard.id
 
             do {
@@ -124,6 +211,30 @@ struct DashboardWebView: NSViewRepresentable {
                 web.load(policy.requestByApplyingAuth(to: URLRequest(url: url)))
             } catch {
                 NSLog("[Quake] Dashboard auth failed: \(error.localizedDescription)")
+            }
+        }
+
+        private func bindActions() {
+            actionSub = commandCenter.actions.sink { [weak self] action in
+                self?.run(action)
+            }
+        }
+
+        private func run(_ action: DashboardSideAction) {
+            guard let web else { return }
+            switch action.kind {
+            case .reload:
+                web.reload()
+            case .back:
+                if web.canGoBack { web.goBack() }
+            case .forward:
+                if web.canGoForward { web.goForward() }
+            case .home:
+                load(force: true)
+            case .openURL:
+                guard let url = action.url else { return }
+                let request = policy?.requestByApplyingAuth(to: URLRequest(url: url)) ?? URLRequest(url: url)
+                web.load(request)
             }
         }
 

@@ -101,6 +101,8 @@ struct WebDashboardsSettingsView: View {
                 NeonDivider()
                 authPicker
                 authFields
+                NeonDivider()
+                sideActionsFields
 
                 if !errors.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
@@ -127,6 +129,74 @@ struct WebDashboardsSettingsView: View {
             }
             .padding(.vertical, 6)
         }
+    }
+
+    private var sideActionsFields: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Toggle("Side actions", isOn: $draft.actionStrip.isEnabled)
+                    .toggleStyle(.switch)
+                Spacer()
+                Picker("", selection: $draft.actionStrip.side) {
+                    ForEach(DashboardActionStripSide.allCases) { side in
+                        Text(side.title).tag(side)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 120)
+                .disabled(!draft.actionStrip.isEnabled)
+            }
+
+            if draft.actionStrip.isEnabled {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach($draft.actionStrip.actions) { $action in
+                        sideActionRow(action: $action)
+                    }
+
+                    Button { addSideAction() } label: {
+                        Label("Action", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(draft.actionStrip.actions.count >= DashboardActionStrip.maxActions)
+                }
+            }
+        }
+        .padding(.vertical, 9)
+    }
+
+    private func sideActionRow(action: Binding<DashboardSideAction>) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Picker("", selection: actionKindBinding(action)) {
+                    ForEach(DashboardSideActionKind.allCases) { kind in
+                        Text(kind.title).tag(kind)
+                    }
+                }
+                .labelsHidden()
+                .frame(width: 130)
+
+                TextField("Label", text: action.title)
+                    .textFieldStyle(.roundedBorder)
+
+                TextField("SF Symbol", text: action.symbol)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 130)
+
+                Button { removeSideAction(action.wrappedValue.id) } label: {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.red.opacity(0.85))
+            }
+
+            if action.wrappedValue.kind == .openURL {
+                TextField("https://example.com/path", text: action.urlString)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+        .padding(8)
+        .background(Color.white.opacity(0.04))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
     }
 
     private var authPicker: some View {
@@ -257,6 +327,28 @@ struct WebDashboardsSettingsView: View {
     private func removeHeader(_ id: UUID) {
         draft.auth.headers.removeAll { $0.id == id }
         secrets.headerValues[id] = nil
+    }
+
+    private func addSideAction() {
+        if !draft.actionStrip.isEnabled { draft.actionStrip.isEnabled = true }
+        guard draft.actionStrip.actions.count < DashboardActionStrip.maxActions else { return }
+        draft.actionStrip.actions.append(.defaultAction())
+    }
+
+    private func removeSideAction(_ id: UUID) {
+        draft.actionStrip.actions.removeAll { $0.id == id }
+    }
+
+    private func actionKindBinding(_ action: Binding<DashboardSideAction>) -> Binding<DashboardSideActionKind> {
+        Binding(
+            get: { action.wrappedValue.kind },
+            set: { newKind in
+                action.wrappedValue.kind = newKind
+                action.wrappedValue.title = newKind.title
+                action.wrappedValue.symbol = newKind.defaultSymbol
+                if newKind != .openURL { action.wrappedValue.urlString = "" }
+            }
+        )
     }
 
     private func headerValueBinding(id: UUID) -> Binding<String> {
