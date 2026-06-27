@@ -73,7 +73,7 @@ struct ScreenWebView: NSViewRepresentable {
             enhanced = true
             for (p, page) in pad.pages.enumerated() {
                 for (i, tile) in page.tiles.enumerated() {
-                    guard tile.image == nil, let urlStr = tile.openURLValue,
+                    guard tile.allowsAutomaticWebIcon, let urlStr = tile.openURLValue,
                           let host = URL(string: urlStr)?.host else { continue }
                     guard let fav = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=128") else { continue }
                     URLSession.shared.dataTask(with: fav) { [weak self] data, _, _ in
@@ -159,7 +159,15 @@ enum ScreenModel {
     }
 
     static func iconInfo(for tile: Tile) -> (url: String, glow: String?, app: Bool)? {
-        if let name = tile.image, let img = DecoAssets.icon(name) {                  // their PNG → neon glow in its own colour
+        if case .emoji(let value)? = tile.customIcon,
+           let img = emoji(value) {
+            guard let r = rasterize(img) else { return nil }
+            return ("data:image/png;base64,\(r.b64)", r.glow ?? hex(NSColor(tile.tint)), false)
+        } else if case .imagePath(let path)? = tile.customIcon,
+                  let img = NSImage(contentsOfFile: (path as NSString).expandingTildeInPath) {
+            guard let r = rasterize(img) else { return nil }
+            return ("data:image/png;base64,\(r.b64)", r.glow, false)
+        } else if let name = tile.image, let img = DecoAssets.icon(name) {           // their PNG → neon glow in its own colour
             guard let r = rasterize(img) else { return nil }
             return ("data:image/png;base64,\(r.b64)", r.glow, false)
         } else if let bid = tile.appBundleID, let app = DecoAssets.appIcon(bid) {    // real app icon → full colour
@@ -170,6 +178,26 @@ enum ScreenModel {
             return ("data:image/png;base64,\(r.b64)", r.glow ?? hex(NSColor(tile.tint)), false)
         }
         return nil
+    }
+
+    static func emoji(_ value: String) -> NSImage? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let side = 96
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        NSColor.clear.setFill()
+        NSRect(x: 0, y: 0, width: side, height: side).fill()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 66),
+            .paragraphStyle: paragraph
+        ]
+        let rect = NSRect(x: 0, y: 9, width: side, height: 76)
+        NSString(string: String(trimmed.prefix(4))).draw(in: rect, withAttributes: attrs)
+        image.unlockFocus()
+        return image
     }
 
     static func symbol(_ name: String, color: NSColor) -> NSImage? {

@@ -15,6 +15,7 @@ struct TileSpec: Codable, Identifiable, Hashable {
     var title: String
     var symbol: String
     var image: String?
+    var customIcon: TileIcon?
     var tintHex: String
     var category: String
     var app: String?
@@ -29,7 +30,7 @@ struct TileSpec: Codable, Identifiable, Hashable {
     var openURLValue: String? { actKind == "url" ? actStr : nil }
 
     init(from t: Tile, category: String, app: String? = nil) {
-        title = t.title; symbol = t.symbol; image = t.image
+        title = t.title; symbol = t.symbol; image = t.image; customIcon = t.customIcon
         tintHex = t.tint.hexRGB; self.category = category; self.app = app; editable = t.editable
         applyAction(t.action)
     }
@@ -74,7 +75,8 @@ struct TileSpec: Codable, Identifiable, Hashable {
     }
 
     func makeTile() -> Tile {
-        Tile(title: title, symbol: symbol, tint: Color(hexRGB: tintHex), action: action, image: image, editable: editable)
+        Tile(title: title, symbol: symbol, tint: Color(hexRGB: tintHex), action: action,
+             image: image, editable: editable, customIcon: customIcon?.nonEmpty)
     }
 
     var dragString: String {

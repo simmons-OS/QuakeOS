@@ -56,3 +56,33 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(MacroText.escapedAppleScriptString("a \"quote\" \\ path"), "a \\\"quote\\\" \\\\ path")
     }
 }
+
+final class TileIconTests: XCTestCase {
+    func testTileIconRoundTripsThroughJSON() throws {
+        let icon = TileIcon.imagePath("~/Pictures/icon.png")
+        let data = try JSONEncoder().encode(icon)
+        let decoded = try JSONDecoder().decode(TileIcon.self, from: data)
+
+        XCTAssertEqual(decoded, icon)
+    }
+
+    func testCustomIconDisablesAutomaticWebIcon() {
+        let automatic = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .openURL("https://example.com"))
+        let custom = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .openURL("https://example.com"), customIcon: .emoji("📘"))
+
+        XCTAssertTrue(automatic.allowsAutomaticWebIcon)
+        XCTAssertFalse(custom.allowsAutomaticWebIcon)
+    }
+
+    func testEmojiIconRendersIntoScreenModel() throws {
+        let tile = Tile(title: "Docs", symbol: "globe", tint: .blue, action: .none, customIcon: .emoji("📘"))
+        let encoded = try XCTUnwrap(ScreenModel.buildModelEnc(pages: [PadPage(name: "Test", tiles: [tile])]))
+        let json = try XCTUnwrap(encoded.removingPercentEncoding)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
+        let icon = try XCTUnwrap(keys.first?["icon"] as? String)
+
+        XCTAssertTrue(icon.hasPrefix("data:image/png;base64,"))
+    }
+}

@@ -10,6 +10,7 @@
 
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 struct TileEditorView: View {
     let pageName: String
@@ -100,7 +101,8 @@ struct TileEditorView: View {
         let selected = session.selectedSpec?.id == spec.id
         return VStack(spacing: 6) {
             TileGlyphView(symbol: spec.symbol, image: spec.image, tint: Color(hexRGB: spec.tintHex),
-                          appBundleID: spec.appBundleID, url: spec.openURLValue, size: 60)
+                          appBundleID: spec.appBundleID, url: spec.openURLValue, size: 60,
+                          customIcon: spec.customIcon)
             Text(spec.title)
                 .font(.system(size: 10, weight: .medium)).foregroundColor(NeonTheme.textSecondary)
                 .lineLimit(1)
@@ -128,6 +130,8 @@ struct TileInspectorRail: View {
     @State private var eValue = ""
     @State private var eDelta = 26
     @State private var eSteps: [MacroStep] = []
+    @State private var eIconKind = "auto"
+    @State private var eIconValue = ""
 
     private var stripSelected: Bool {
         session.selectedSlot != nil && session.index(ofPage: pageName) != nil
@@ -203,7 +207,8 @@ struct TileInspectorRail: View {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(spacing: 12) {
                         TileGlyphView(symbol: spec.symbol, image: spec.image, tint: Color(hexRGB: spec.tintHex),
-                                      appBundleID: spec.appBundleID, url: spec.openURLValue, size: 46)
+                                      appBundleID: spec.appBundleID, url: spec.openURLValue, size: 46,
+                                      customIcon: spec.customIcon)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(spec.title).font(.system(size: 15, weight: .semibold)).foregroundColor(NeonTheme.textPrimary)
                             Text(spec.category).font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
@@ -252,10 +257,23 @@ struct TileInspectorRail: View {
         }
     }
 
+    private var currentCustomIcon: TileIcon? {
+        switch eIconKind {
+        case "emoji": return .emoji(eIconValue)
+        case "image": return .imagePath(eIconValue)
+        default: return nil
+        }
+    }
+
     private func loadInspector() {
         guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot,
               let t = session.tile(page: p, slot: sel) else { return }
-        eTitle = t.title; eValue = ""; eDelta = 26; eSteps = []
+        eTitle = t.title; eValue = ""; eDelta = 26; eSteps = []; eIconKind = "auto"; eIconValue = ""
+        switch t.customIcon {
+        case .emoji(let value): eIconKind = "emoji"; eIconValue = value
+        case .imagePath(let value): eIconKind = "image"; eIconValue = value
+        case .none: break
+        }
         switch t.action {
         case .launchApp(let b):   eKind = "app";     eValue = b
         case .openURL(let u):     eKind = "url";     eValue = u
@@ -274,6 +292,11 @@ struct TileInspectorRail: View {
     private func applyInspector() {
         guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot else { return }
         session.setTitleAction(page: p, slot: sel, title: eTitle, action: currentAction)
+    }
+
+    private func applyIcon() {
+        guard let p = session.index(ofPage: pageName), let sel = session.selectedSlot else { return }
+        session.setCustomIcon(page: p, slot: sel, customIcon: currentCustomIcon)
     }
 
     private func chooseApp() {
@@ -300,6 +323,18 @@ struct TileInspectorRail: View {
         }
     }
 
+    private func chooseIconImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            eIconKind = "image"; eIconValue = url.path
+            applyIcon()
+        }
+    }
+
     @ViewBuilder private var stripInspectorCard: some View {
         NeonCard("Edit Tile") {
             VStack(alignment: .leading, spacing: 12) {
@@ -320,6 +355,8 @@ struct TileInspectorRail: View {
                             applyInspector()
                         }
                         actionValueRow
+                        Text("Icon").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+                        iconValueRow
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 6) {
@@ -386,6 +423,31 @@ struct TileInspectorRail: View {
         default:
             Text("This tile does nothing until you pick an action.")
                 .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
+        }
+    }
+
+    private var iconValueRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("", selection: $eIconKind) {
+                Text("Automatic").tag("auto")
+                Text("Emoji").tag("emoji")
+                Text("Image").tag("image")
+            }
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .onChange(of: eIconKind) { _ in applyIcon() }
+
+            switch eIconKind {
+            case "emoji":
+                field($eIconValue, placeholder: "🌐", onChange: applyIcon)
+            case "image":
+                VStack(alignment: .leading, spacing: 8) {
+                    field($eIconValue, placeholder: "~/Pictures/icon.png", onChange: applyIcon)
+                    HStack { Spacer(); pill("Choose Image…", NeonTheme.purple) { chooseIconImage() } }
+                }
+            default:
+                EmptyView()
+            }
         }
     }
 
@@ -522,12 +584,16 @@ struct TileInspectorRail: View {
     }
 
     private func field(_ text: Binding<String>, placeholder: String) -> some View {
+        field(text, placeholder: placeholder, onChange: applyInspector)
+    }
+
+    private func field(_ text: Binding<String>, placeholder: String, onChange: @escaping () -> Void) -> some View {
         TextField(placeholder, text: text)
             .textFieldStyle(.plain).font(.system(size: 13)).foregroundColor(NeonTheme.textPrimary)
             .padding(.horizontal, 10).padding(.vertical, 7)
             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.04)))
             .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
-            .onChange(of: text.wrappedValue) { _ in applyInspector() }
+            .onChange(of: text.wrappedValue) { _ in onChange() }
     }
 
     private func pill(_ title: String, _ tint: Color, _ action: @escaping () -> Void) -> some View {

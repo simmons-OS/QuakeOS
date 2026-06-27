@@ -25,6 +25,45 @@ enum PadAction {
     case none
 }
 
+enum TileIcon: Codable, Hashable {
+    case emoji(String)
+    case imagePath(String)
+
+    private enum CodingKeys: String, CodingKey { case kind, value }
+
+    var isEmpty: Bool {
+        switch self {
+        case .emoji(let value), .imagePath(let value):
+            return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    var nonEmpty: TileIcon? { isEmpty ? nil : self }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let kind = try container.decodeIfPresent(String.self, forKey: .kind) ?? ""
+        let value = try container.decodeIfPresent(String.self, forKey: .value) ?? ""
+        switch kind {
+        case "emoji": self = .emoji(value)
+        case "image": self = .imagePath(value)
+        default: self = .emoji("")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .emoji(let value):
+            try container.encode("emoji", forKey: .kind)
+            try container.encode(value, forKey: .value)
+        case .imagePath(let value):
+            try container.encode("image", forKey: .kind)
+            try container.encode(value, forKey: .value)
+        }
+    }
+}
+
 enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case key
     case text
@@ -192,6 +231,7 @@ struct Tile: Identifiable {
     let action: PadAction
     var image: String? = nil    // DecoKee PNG glyph name (in bundle Icons/), used verbatim when set
     var editable: Bool = false  // false = built-in preset (Safari, Music, …) → action not editable
+    var customIcon: TileIcon? = nil
 
     /// Bundle id when this tile launches an app — lets the tile show the real macOS app icon.
     var appBundleID: String? {
@@ -208,6 +248,10 @@ struct Tile: Identifiable {
     var macroStepCount: Int? {
         if case .macro(let steps) = action { return steps.count }
         return nil
+    }
+
+    var allowsAutomaticWebIcon: Bool {
+        customIcon == nil && image == nil
     }
 }
 
@@ -562,15 +606,16 @@ final class PadModel: ObservableObject {
     private func runMacro(_ steps: [MacroStep]) {
         guard !macroBusy else { return }
         macroBusy = true
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { macroBusy = false }
             for step in steps {
                 if step.kind == .delay {
                     try? await Task.sleep(nanoseconds: UInt64(step.delayMilliseconds) * 1_000_000)
                 } else if let action = step.padAction {
-                    await MainActor.run { self?.run(action) }
+                    run(action)
                 }
             }
-            await MainActor.run { self?.macroBusy = false }
         }
     }
 
@@ -750,10 +795,16 @@ private struct ActionDTO: Codable {
     }
 }
 private struct TileDTO: Codable {
-    var title: String; var symbol: String; var tintHex: String; var image: String?; var action: ActionDTO
+    var title: String; var symbol: String; var tintHex: String; var image: String?; var action: ActionDTO; var customIcon: TileIcon?
     var editable: Bool?     // optional → old pages.json (without it) still decodes (defaults to preset)
-    init(_ t: Tile) { title = t.title; symbol = t.symbol; tintHex = t.tint.hexRGB; image = t.image; action = ActionDTO(t.action); editable = t.editable }
-    func toTile() -> Tile { Tile(title: title, symbol: symbol, tint: Color(hexRGB: tintHex), action: action.action, image: image, editable: editable ?? false) }
+    init(_ t: Tile) {
+        title = t.title; symbol = t.symbol; tintHex = t.tint.hexRGB; image = t.image
+        action = ActionDTO(t.action); editable = t.editable; customIcon = t.customIcon
+    }
+    func toTile() -> Tile {
+        Tile(title: title, symbol: symbol, tint: Color(hexRGB: tintHex), action: action.action,
+             image: image, editable: editable ?? false, customIcon: customIcon?.nonEmpty)
+    }
 }
 private struct PageDTO: Codable {
     var name: String; var tiles: [TileDTO]
@@ -815,7 +866,14 @@ final class TileEditSession: ObservableObject {
     /// Edit a placed tile's title + action, keeping its glyph/tint.
     func setTitleAction(page: Int, slot: Int, title: String, action: PadAction) {
         guard let t0 = tile(page: page, slot: slot) else { return }
-        setTile(page: page, slot: slot, Tile(title: title, symbol: t0.symbol, tint: t0.tint, action: action, image: t0.image, editable: t0.editable))
+        setTile(page: page, slot: slot, Tile(title: title, symbol: t0.symbol, tint: t0.tint, action: action,
+                                             image: t0.image, editable: t0.editable, customIcon: t0.customIcon))
+    }
+
+    func setCustomIcon(page: Int, slot: Int, customIcon: TileIcon?) {
+        guard let t0 = tile(page: page, slot: slot) else { return }
+        setTile(page: page, slot: slot, Tile(title: t0.title, symbol: t0.symbol, tint: t0.tint, action: t0.action,
+                                             image: t0.image, editable: t0.editable, customIcon: customIcon?.nonEmpty))
     }
 
     func remove(page: Int, slot: Int) {

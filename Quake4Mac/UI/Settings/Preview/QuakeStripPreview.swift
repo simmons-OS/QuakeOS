@@ -212,7 +212,8 @@ struct QuakeStripPreview: View {
     private func dragTilePreview(_ t: Tile) -> some View {
         VStack(spacing: 4) {
             TileGlyphView(symbol: t.symbol, image: t.image, tint: t.tint,
-                          appBundleID: t.appBundleID, url: t.openURLValue, size: 56)
+                          appBundleID: t.appBundleID, url: t.openURLValue, size: 56,
+                          customIcon: t.customIcon)
             Text(t.title).font(.system(size: 9, weight: .medium))
                 .foregroundColor(.white.opacity(0.85)).lineLimit(1)
         }
@@ -386,7 +387,7 @@ struct QuakePreviewWeb: NSViewRepresentable {
         private func enhanceFavicons() {
             guard lastPages.indices.contains(lastPage) else { return }
             for (i, tile) in lastPages[lastPage].tiles.enumerated() {
-                guard tile.image == nil, let urlStr = tile.openURLValue,
+                guard tile.allowsAutomaticWebIcon, let urlStr = tile.openURLValue,
                       let host = URL(string: urlStr)?.host else { continue }
                 if let c = Coord.favCache[host] { setKeyIcon(lastPage, i, c.b64, c.glow); continue }
                 guard let fav = URL(string: "https://www.google.com/s2/favicons?domain=\(host)&sz=128") else { continue }
