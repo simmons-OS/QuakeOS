@@ -538,12 +538,14 @@ final class DropInAppStore: ObservableObject {
     @Published private(set) var apps: [DropInAppRecord] = []
     @Published private(set) var issues: [DropInAppIssue] = []
     @Published private(set) var optionValuesByAppID: [String: [String: String]] = [:]
+    @Published private(set) var counterValuesByAppID: [String: [String: Int]] = [:]
 
     let rootURL: URL
     private let fileManager: FileManager
     private let defaults: UserDefaults
     private let secretStore: DropInAppSecretStoring
     private static let optionValuesKey = "dropInApps.optionValues"
+    private static let counterValuesKey = "dropInApps.counterValues"
     private static let riskyHostCodeExtensions: Set<String> = [
         "exe", "dll", "com", "scr", "msi", "bat", "cmd", "ps1", "psm1", "vbs", "vbe",
         "wsf", "wsh", "jar", "sh", "cpl", "command"
@@ -558,6 +560,7 @@ final class DropInAppStore: ObservableObject {
         self.defaults = defaults
         self.secretStore = secretStore
         optionValuesByAppID = defaults.dictionary(forKey: Self.optionValuesKey) as? [String: [String: String]] ?? [:]
+        counterValuesByAppID = Self.loadCounterValues(from: defaults)
         refresh()
     }
 
@@ -638,6 +641,26 @@ final class DropInAppStore: ObservableObject {
         optionValuesByAppID = next
         try? secretStore.deleteAll(appID: appID)
         saveOptionValues()
+    }
+
+    func counterValue(appID: String, slot: Int, defaultValue: Int = 0) -> Int {
+        counterValuesByAppID[appID]?[Self.counterSlotKey(slot)] ?? defaultValue
+    }
+
+    @discardableResult
+    func adjustCounter(appID: String, slot: Int, defaultValue: Int = 0, delta: Int) -> Int {
+        let value = counterValue(appID: appID, slot: slot, defaultValue: defaultValue) + delta
+        setCounterValue(appID: appID, slot: slot, value: value)
+        return value
+    }
+
+    func setCounterValue(appID: String, slot: Int, value: Int) {
+        let key = Self.counterSlotKey(slot)
+        guard counterValuesByAppID[appID]?[key] != value else { return }
+        var next = counterValuesByAppID
+        next[appID, default: [:]][key] = value
+        counterValuesByAppID = next
+        saveCounterValues()
     }
 
     func importFolder(at sourceURL: URL,
@@ -741,8 +764,12 @@ final class DropInAppStore: ObservableObject {
         var next = optionValuesByAppID
         next[id] = nil
         optionValuesByAppID = next
+        var counters = counterValuesByAppID
+        counters[id] = nil
+        counterValuesByAppID = counters
         try? secretStore.deleteAll(appID: id)
         saveOptionValues()
+        saveCounterValues()
         refresh()
         return .success(())
     }
@@ -904,6 +931,31 @@ final class DropInAppStore: ObservableObject {
 
     private func saveOptionValues() {
         defaults.set(optionValuesByAppID, forKey: Self.optionValuesKey)
+    }
+
+    private func saveCounterValues() {
+        defaults.set(counterValuesByAppID, forKey: Self.counterValuesKey)
+    }
+
+    private static func counterSlotKey(_ slot: Int) -> String {
+        String(slot)
+    }
+
+    private static func loadCounterValues(from defaults: UserDefaults) -> [String: [String: Int]] {
+        guard let rawApps = defaults.dictionary(forKey: counterValuesKey) else { return [:] }
+        var result: [String: [String: Int]] = [:]
+        for (appID, rawSlots) in rawApps {
+            guard let rawSlots = rawSlots as? [String: Any] else { continue }
+            let slots = rawSlots.compactMapValues { value -> Int? in
+                if let value = value as? Int { return value }
+                if let value = value as? NSNumber { return value.intValue }
+                return nil
+            }
+            if !slots.isEmpty {
+                result[appID] = slots
+            }
+        }
+        return result
     }
 
     private func rewriteManifestID(at manifestURL: URL, id: String) throws {
