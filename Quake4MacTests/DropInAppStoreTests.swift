@@ -202,6 +202,35 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertTrue(store.apps.isEmpty)
     }
 
+    func testRemoveAppDeletesFolderAndSavedOptionValues() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","options":[{"key":"theme","type":"text","default":"dark"}]}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        store.setOptionValue(appID: "clock", optionKey: "theme", value: "light")
+
+        let result = store.removeApp(id: "clock")
+
+        guard case .success = result else {
+            return XCTFail("Expected successful removal")
+        }
+        XCTAssertTrue(store.apps.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: root.appendingPathComponent("clock").path))
+        XCTAssertNil(store.optionValuesByAppID["clock"])
+        let reloaded = DropInAppStore(rootURL: root, defaults: defaults)
+        XCTAssertNil(reloaded.optionValuesByAppID["clock"])
+    }
+
+    func testRemoveAppRejectsMissingApp() {
+        let store = DropInAppStore(rootURL: temporaryDirectory())
+
+        guard case .failure(.missing("missing")) = store.removeApp(id: "missing") else {
+            return XCTFail("Expected missing-app removal failure")
+        }
+    }
+
     func testManifestFileAliasIsAccepted() throws {
         let data = Data(#"{"id":"alias","file":"index.html"}"#.utf8)
         let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)

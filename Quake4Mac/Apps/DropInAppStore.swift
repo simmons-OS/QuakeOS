@@ -106,6 +106,20 @@ enum DropInAppImportError: LocalizedError, Equatable {
     }
 }
 
+enum DropInAppRemovalError: LocalizedError, Equatable {
+    case missing(String)
+    case removeFailed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missing(let id):
+            return "The app \"\(id)\" is no longer installed."
+        case .removeFailed(let message):
+            return message
+        }
+    }
+}
+
 final class DropInAppStore: ObservableObject {
     static let shared = DropInAppStore()
 
@@ -204,6 +218,23 @@ final class DropInAppStore: ObservableObject {
             }
             return .failure(.invalidSource("Imported app could not be scanned."))
         }
+    }
+
+    func removeApp(id: String) -> Result<Void, DropInAppRemovalError> {
+        guard let app = app(id: id) else { return .failure(.missing(id)) }
+
+        do {
+            try fileManager.removeItem(at: app.rootURL)
+        } catch {
+            return .failure(.removeFailed(error.localizedDescription))
+        }
+
+        var next = optionValuesByAppID
+        next[id] = nil
+        optionValuesByAppID = next
+        saveOptionValues()
+        refresh()
+        return .success(())
     }
 
     func refresh() {
