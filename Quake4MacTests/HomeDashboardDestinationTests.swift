@@ -30,6 +30,24 @@ final class MacroActionTests: XCTestCase {
         XCTAssertEqual(url, "https://example.com")
     }
 
+    func testMacroStepMapsAppToPadAction() {
+        let step = MacroStep(kind: .app, value: "com.apple.Safari", intValue: 0)
+
+        guard case .launchApp(let bundleID)? = step.padAction else {
+            return XCTFail("Expected app launch action")
+        }
+        XCTAssertEqual(bundleID, "com.apple.Safari")
+    }
+
+    func testMacroStepMapsOpenPathToPadAction() {
+        let step = MacroStep(kind: .openPath, value: "~/Downloads", intValue: 0)
+
+        guard case .openPath(let path)? = step.padAction else {
+            return XCTFail("Expected open path action")
+        }
+        XCTAssertEqual(path, "~/Downloads")
+    }
+
     func testMacroStepJSONDefaultsMissingID() throws {
         let data = #"{"kind":"key","value":"command+p","intValue":0}"#.data(using: .utf8)!
         let step = try JSONDecoder().decode(MacroStep.self, from: data)

@@ -593,13 +593,51 @@ struct TileInspectorRail: View {
                     Text("\(eSteps[index].intValue)")
                         .font(.system(size: 12).monospacedDigit()).foregroundColor(NeonTheme.textSecondary)
                 }
+            case .app:
+                HStack(spacing: 8) {
+                    macroStepTextField(index)
+                    pill("Choose App...", NeonTheme.purple) { chooseMacroStepApp(index) }
+                }
+            case .openPath:
+                HStack(spacing: 8) {
+                    macroStepTextField(index)
+                    pill("Choose File...", NeonTheme.purple) { chooseMacroStepPath(index) }
+                }
             default:
-                TextField(macroStepPlaceholder(eSteps[index].kind), text: macroStepValueBinding(index))
-                    .textFieldStyle(.plain).font(.system(size: 13)).foregroundColor(NeonTheme.textPrimary)
-                    .padding(.horizontal, 10).padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.04)))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+                macroStepTextField(index)
             }
+        }
+    }
+
+    private func macroStepTextField(_ index: Int) -> some View {
+        TextField(macroStepPlaceholder(eSteps[index].kind), text: macroStepValueBinding(index))
+            .textFieldStyle(.plain).font(.system(size: 13)).foregroundColor(NeonTheme.textPrimary)
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.white.opacity(0.04)))
+            .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(NeonTheme.stroke, lineWidth: 1))
+    }
+
+    private func chooseMacroStepApp(_ index: Int) {
+        guard eSteps.indices.contains(index) else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url, let bid = Bundle(url: url)?.bundleIdentifier {
+            eSteps[index].value = bid
+            applyInspector()
+        }
+    }
+
+    private func chooseMacroStepPath(_ index: Int) {
+        guard eSteps.indices.contains(index) else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            eSteps[index].value = url.path
+            applyInspector()
         }
     }
 
