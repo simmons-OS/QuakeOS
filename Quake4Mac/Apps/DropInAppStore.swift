@@ -533,7 +533,7 @@ final class DropInAppStore: ObservableObject {
     }
 
     static func clientAPIPaths(for app: DropInAppRecord) -> [String: String] {
-        var paths = ["open": "/app-api/open?app=\(app.id)"]
+        var paths = ["open": app.manifest.served ? "/app-api/open" : "/app-api/open?app=\(app.id)"]
         if app.manifest.served {
             paths["config"] = "/app-proxy/config"
         }
