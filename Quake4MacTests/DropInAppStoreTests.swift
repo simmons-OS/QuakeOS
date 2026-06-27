@@ -15,6 +15,39 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertTrue(store.issues.isEmpty)
     }
 
+    func testStaticLaunchURLIncludesNonSecretDefaultOptionsInFragment() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"token","type":"secret","default":"abc"},
+          {"key":"serverToken","type":"text","default":"server","serverOnly":true}
+        ]}
+        """)
+        let store = DropInAppStore(rootURL: root)
+        let app = try XCTUnwrap(store.apps.first)
+
+        let url = try XCTUnwrap(store.staticLaunchURL(for: app))
+
+        XCTAssertEqual(url.fragment, "theme=dark")
+    }
+
+    func testHomeCatalogIncludesStaticDropInAppsOnly() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "static", manifest: """
+        {"id":"static","name":"Static App","entry":"index.html"}
+        """)
+        try writeApp(root: root, folder: "served", manifest: """
+        {"id":"served","name":"Served App","entry":"index.html","served":true}
+        """)
+        let store = DropInAppStore(rootURL: root)
+
+        let catalog = HomeStore.dropInCatalogApps(store.apps)
+
+        XCTAssertEqual(catalog.map(\.title), ["Static App"])
+        XCTAssertEqual(catalog.first?.dest, .dropInApp("static"))
+    }
+
     func testManifestFileAliasIsAccepted() throws {
         let data = Data(#"{"id":"alias","file":"index.html"}"#.utf8)
         let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)

@@ -15,6 +15,7 @@ extension AppDest {
         case .panel(let p):     return "panel:\(p)"
         case .builtin(let b):   return "builtin:\(b)"
         case .dashboard(let id): return "dashboard:\(id.uuidString)"
+        case .dropInApp(let id): return "dropInApp:\(id)"
         }
     }
     init?(storageKey s: String) {
@@ -27,6 +28,9 @@ extension AppDest {
         case "dashboard":
             guard let id = UUID(uuidString: parts[1]) else { return nil }
             self = .dashboard(id)
+        case "dropInApp":
+            guard DropInAppStore.isValidAppID(parts[1]) else { return nil }
+            self = .dropInApp(parts[1])
         default:          return nil
         }
     }
@@ -37,6 +41,7 @@ extension AppDest {
         case .panel(let p):     return p == "monitor" ? "System Monitor" : p.capitalized
         case .builtin(let b):   return b.capitalized
         case .dashboard(let id): return DashboardStore.shared.dashboard(id: id)?.name ?? "Missing Dashboard"
+        case .dropInApp(let id): return DropInAppStore.shared.app(id: id)?.manifest.name ?? "Missing App"
         }
     }
 }
@@ -107,7 +112,7 @@ final class HomeStore: ObservableObject {
     func replace(_ newPages: [[HomeApp]]) { pages = newPages }
 
     /// Every app you can drop onto a home page (built-ins, panels, and your macro pages).
-    static func catalog() -> [HomeApp] {
+    static func catalog(dropInApps: [DropInAppRecord] = DropInAppStore.shared.apps) -> [HomeApp] {
         var out: [HomeApp] = [
             HomeApp(title: "Clock",     symbol: "clock.fill",     tint: .orange, dest: .panel("clock")),
             HomeApp(title: "Music",     symbol: "music.note",     tint: .pink,   dest: .panel("music")),
@@ -122,7 +127,14 @@ final class HomeStore: ObservableObject {
             let symbol = dashboard.auth.kind == .homeAssistant ? "house.and.flag.fill" : "globe"
             out.append(HomeApp(title: dashboard.name, symbol: symbol, tint: .cyan, dest: .dashboard(dashboard.id)))
         }
+        out.append(contentsOf: dropInCatalogApps(dropInApps))
         return out
+    }
+
+    static func dropInCatalogApps(_ apps: [DropInAppRecord]) -> [HomeApp] {
+        apps.filter { !$0.manifest.served }.map {
+            HomeApp(title: $0.manifest.name, symbol: "app.dashed", tint: .purple, dest: .dropInApp($0.id))
+        }
     }
 
     func removeDashboardReferences(id: UUID) {

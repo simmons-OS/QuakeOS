@@ -13,6 +13,16 @@ final class HomeDashboardDestinationTests: XCTestCase {
     func testInvalidDashboardDestinationKeyFails() {
         XCTAssertNil(AppDest(storageKey: "dashboard:not-a-uuid"))
     }
+
+    func testDropInAppDestinationRoundTripsThroughStorageKey() throws {
+        let destination = AppDest.dropInApp("clock")
+
+        XCTAssertEqual(AppDest(storageKey: destination.storageKey), destination)
+    }
+
+    func testInvalidDropInAppDestinationKeyFails() {
+        XCTAssertNil(AppDest(storageKey: "dropInApp:Bad App"))
+    }
 }
 
 final class MacroActionTests: XCTestCase {

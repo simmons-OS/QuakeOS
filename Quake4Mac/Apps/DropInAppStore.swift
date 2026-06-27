@@ -101,6 +101,21 @@ final class DropInAppStore: ObservableObject {
         refresh()
     }
 
+    func app(id: String) -> DropInAppRecord? {
+        apps.first { $0.id == id }
+    }
+
+    func staticLaunchURL(for app: DropInAppRecord) -> URL? {
+        guard !app.manifest.served,
+              var url = Self.containedURL(root: app.rootURL, relativePath: app.manifest.entry) else { return nil }
+        if let fragment = Self.staticOptionsFragment(for: app.manifest.options),
+           var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
+            components.percentEncodedFragment = fragment
+            url = components.url ?? url
+        }
+        return url
+    }
+
     func refresh() {
         do {
             try fileManager.createDirectory(at: rootURL, withIntermediateDirectories: true)
@@ -165,6 +180,17 @@ final class DropInAppStore: ObservableObject {
         let resolved = root.appendingPathComponent(normalized).standardizedFileURL
         guard resolved.path == rootPath || resolved.path.hasPrefix(rootPath + "/") else { return nil }
         return resolved
+    }
+
+    static func staticOptionsFragment(for options: [DropInAppOption]) -> String? {
+        let queryItems = options.compactMap { option -> URLQueryItem? in
+            guard option.type != "secret", !option.serverOnly, let value = option.defaultValue else { return nil }
+            return URLQueryItem(name: option.key, value: value)
+        }
+        guard !queryItems.isEmpty else { return nil }
+        var components = URLComponents()
+        components.queryItems = queryItems
+        return components.percentEncodedQuery
     }
 
     private enum ScanResult {
