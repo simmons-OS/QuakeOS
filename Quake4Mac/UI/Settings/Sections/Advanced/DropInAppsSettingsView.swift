@@ -5,6 +5,7 @@ struct DropInAppsSettingsView: View {
     @ObservedObject private var store = DropInAppStore.shared
     @State private var importMessage = ""
     @State private var importError = ""
+    @State private var pendingRemoval: DropInAppRecord?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -17,6 +18,14 @@ struct DropInAppsSettingsView: View {
                 libraryCard
                     .frame(maxWidth: 680, alignment: .top)
             }
+        }
+        .confirmationDialog("Remove Drop-In App?",
+                            isPresented: removalDialogPresented,
+                            titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { removePendingApp() }
+            Button("Cancel", role: .cancel) { pendingRemoval = nil }
+        } message: {
+            Text("This deletes the imported app folder from QuakeOS. It does not affect the source folder you imported from.")
         }
     }
 
@@ -97,14 +106,14 @@ struct DropInAppsSettingsView: View {
                             .font(.system(size: 10).monospaced())
                             .foregroundColor(NeonTheme.textTertiary)
                     }
-                    Text("\(app.manifest.served ? "Served" : "Static") · \(app.manifest.entry)")
+                    Text("\(runtimeLabel(for: app)) · \(app.manifest.entry)")
                         .font(.system(size: 11))
                         .foregroundColor(NeonTheme.textTertiary)
                         .lineLimit(1)
                 }
                 Spacer()
                 if app.hasHostCode {
-                    Text("HOST CODE")
+                    Text("HOST CODE NOT RUN")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(NeonTheme.magenta)
                         .padding(.horizontal, 8)
@@ -118,6 +127,11 @@ struct DropInAppsSettingsView: View {
                     .buttonStyle(.bordered)
                     .help("Reset options")
                 }
+                Button(role: .destructive) { pendingRemoval = app } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.bordered)
+                .help("Remove app")
             }
 
             if !options.isEmpty {
@@ -161,6 +175,11 @@ struct DropInAppsSettingsView: View {
 
     private func isBooleanOption(_ option: DropInAppOption) -> Bool {
         option.type == "bool" || option.type == "boolean"
+    }
+
+    private func runtimeLabel(for app: DropInAppRecord) -> String {
+        if app.hasHostCode { return "Served via loopback; host code disabled" }
+        return app.manifest.served ? "Served via loopback" : "Static file"
     }
 
     private var issueList: some View {
@@ -212,6 +231,24 @@ struct DropInAppsSettingsView: View {
         case .failure(let error):
             importMessage = ""
             importError = error.errorDescription ?? "Import failed."
+        }
+    }
+
+    private var removalDialogPresented: Binding<Bool> {
+        Binding(get: { pendingRemoval != nil },
+                set: { if !$0 { pendingRemoval = nil } })
+    }
+
+    private func removePendingApp() {
+        guard let app = pendingRemoval else { return }
+        pendingRemoval = nil
+        switch store.removeApp(id: app.id) {
+        case .success:
+            importError = ""
+            importMessage = "Removed \(app.manifest.name)."
+        case .failure(let error):
+            importMessage = ""
+            importError = error.errorDescription ?? "Remove failed."
         }
     }
 }
