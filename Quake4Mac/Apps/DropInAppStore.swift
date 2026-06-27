@@ -1,5 +1,6 @@
 import Foundation
 import Security
+import SwiftUI
 
 struct DropInAppOption: Decodable, Equatable, Identifiable {
     var id: String { key }
@@ -97,6 +98,43 @@ enum DropInAppJSONValue: Decodable, Equatable {
     }
 }
 
+extension DropInAppJSONValue {
+    var objectValue: [String: DropInAppJSONValue]? {
+        guard case .object(let value) = self else { return nil }
+        return value
+    }
+
+    var arrayValue: [DropInAppJSONValue]? {
+        guard case .array(let value) = self else { return nil }
+        return value
+    }
+
+    var stringValue: String? {
+        switch self {
+        case .string(let value):
+            return value
+        case .number(let value):
+            return value.rounded() == value ? String(Int(value)) : String(value)
+        case .bool(let value):
+            return value ? "true" : "false"
+        case .object, .array, .null:
+            return nil
+        }
+    }
+
+    var intValue: Int? {
+        switch self {
+        case .number(let value):
+            guard value.rounded() == value else { return nil }
+            return Int(value)
+        case .string(let value):
+            return Int(value.trimmingCharacters(in: .whitespacesAndNewlines))
+        case .bool, .object, .array, .null:
+            return nil
+        }
+    }
+}
+
 struct DropInAppGridConfig: Decodable, Equatable {
     let cols: Int
     let rows: Int
@@ -117,6 +155,188 @@ struct DropInAppGridConfig: Decodable, Equatable {
         cols = try c.decode(Int.self, forKey: .cols)
         rows = try c.decode(Int.self, forKey: .rows)
         defaults = try c.decodeIfPresent([DropInAppJSONValue].self, forKey: .defaults) ?? []
+    }
+
+    var nativeTileCount: Int {
+        min(PadModel.perPage, max(0, cols) * max(0, rows))
+    }
+
+    func nativeTiles() -> [Tile] {
+        let count = nativeTileCount
+        var tiles = defaults.prefix(count).map(DropInAppGridTileMapper.tile)
+        while tiles.count < count {
+            tiles.append(PadStore.emptyTile)
+        }
+        return tiles
+    }
+}
+
+private enum DropInAppGridTileMapper {
+    static func tile(from value: DropInAppJSONValue) -> Tile {
+        guard let object = value.objectValue,
+              let type = string("type", in: object), !type.isEmpty else {
+            return PadStore.emptyTile
+        }
+        let title = string("label", in: object) ?? string("title", in: object) ?? ""
+        let icon = string("icon", in: object)
+            ?? string("iconImage", in: object)
+        let action = action(type: type, object: object)
+        return Tile(title: title,
+                    symbol: symbol(for: type),
+                    tint: tint(for: type),
+                    action: action,
+                    editable: true,
+                    customIcon: customIcon(icon: icon, object: object),
+                    columnSpan: int("w", in: object) ?? 1,
+                    rowSpan: int("h", in: object) ?? 1)
+    }
+
+    private static func action(type rawType: String, object: [String: DropInAppJSONValue]) -> PadAction {
+        let type = rawType.trimmingCharacters(in: .whitespacesAndNewlines)
+        let value = string("value", in: object) ?? ""
+        switch type {
+        case "url":
+            return .openURL(value)
+        case "app":
+            return .launchApp(bundleID: value)
+        case "cmd", "shell":
+            return .shell(value)
+        case "open", "openPath":
+            return .openPath(value)
+        case "page":
+            return .openPage(value)
+        case "system":
+            return systemAction(value: value)
+        case "counter":
+            return .counter(value: int("value", in: object) ?? 0)
+        case "paste_text", "pasteText":
+            return .pasteText(value)
+        case "key":
+            return .keyCombo(value)
+        case "text":
+            return .typeText(value)
+        case "macro":
+            return .macro(macroSteps(in: object))
+        default:
+            return .none
+        }
+    }
+
+    private static func systemAction(value: String) -> PadAction {
+        switch value {
+        case "config":
+            return .system(.openSettings)
+        case "lock":
+            return .system(.lockScreen)
+        default:
+            return .none
+        }
+    }
+
+    private static func macroSteps(in object: [String: DropInAppJSONValue]) -> [MacroStep] {
+        guard let steps = object["steps"]?.arrayValue else { return [] }
+        return steps.compactMap { step in
+            guard let object = step.objectValue,
+                  let kind = string("kind", in: object) else { return nil }
+            let value = string("value", in: object) ?? ""
+            switch kind {
+            case "key":
+                return MacroStep(kind: .key, value: value, intValue: 0)
+            case "text":
+                return MacroStep(kind: .text, value: value, intValue: 0)
+            case "paste_text", "pasteText":
+                return MacroStep(kind: .pasteText, value: value, intValue: 0)
+            case "delay":
+                return MacroStep(kind: .delay, value: "", intValue: int("value", in: object) ?? int("intValue", in: object) ?? 250)
+            case "app":
+                return MacroStep(kind: .app, value: value, intValue: 0)
+            case "url":
+                return MacroStep(kind: .url, value: value, intValue: 0)
+            case "open", "openPath":
+                return MacroStep(kind: .openPath, value: value, intValue: 0)
+            case "cmd", "shell":
+                return MacroStep(kind: .shell, value: value, intValue: 0)
+            case "page":
+                return MacroStep(kind: .page, value: value, intValue: 0)
+            case "system" where value == "config":
+                return MacroStep(kind: .openSettings, value: "", intValue: 0)
+            case "system" where value == "lock":
+                return MacroStep(kind: .lockScreen, value: "", intValue: 0)
+            default:
+                return nil
+            }
+        }
+    }
+
+    private static func customIcon(icon: String?, object: [String: DropInAppJSONValue]) -> TileIcon? {
+        let trimmed = icon?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !trimmed.isEmpty else { return nil }
+        if string("iconType", in: object) == "image" {
+            return .imagePath(trimmed)
+        }
+        return .emoji(trimmed)
+    }
+
+    private static func string(_ key: String, in object: [String: DropInAppJSONValue]) -> String? {
+        object[key]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func int(_ key: String, in object: [String: DropInAppJSONValue]) -> Int? {
+        object[key]?.intValue
+    }
+
+    private static func symbol(for type: String) -> String {
+        switch type {
+        case "url":
+            return "globe"
+        case "app":
+            return "app"
+        case "cmd", "shell":
+            return "terminal"
+        case "open", "openPath":
+            return "folder"
+        case "page":
+            return "square.grid.2x2"
+        case "system":
+            return "gearshape"
+        case "counter":
+            return "number"
+        case "paste_text", "pasteText":
+            return "doc.on.clipboard"
+        case "key":
+            return "keyboard"
+        case "text":
+            return "text.cursor"
+        case "macro":
+            return "list.bullet.rectangle"
+        default:
+            return "square.dashed"
+        }
+    }
+
+    private static func tint(for type: String) -> Color {
+        switch type {
+        case "url":
+            return .blue
+        case "app":
+            return .purple
+        case "cmd", "shell":
+            return .gray
+        case "open", "openPath":
+            return .cyan
+        case "page":
+            return .teal
+        case "system":
+            return .orange
+        case "counter":
+            return .orange
+        case "paste_text", "pasteText", "text":
+            return .green
+        case "key", "macro":
+            return .indigo
+        default:
+            return .gray
+        }
     }
 }
 

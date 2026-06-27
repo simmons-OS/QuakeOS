@@ -223,6 +223,73 @@ final class DropInAppStoreTests: XCTestCase {
         ]))
     }
 
+    func testGridMetadataBuildsNativeTilesFromDefaults() throws {
+        let data = Data("""
+        {"id":"agenda","entry":"agenda.html","served":true,
+         "grid":{"cols":3,"rows":2,"defaults":[
+           {"label":"Docs","icon":"🌐","type":"url","value":"https://example.com","w":2},
+           {"label":"Count","type":"counter","value":"4"},
+           {"label":"Image","iconType":"image","iconImage":"~/icon.png","type":"text","value":"hello","h":1.5}
+         ]}}
+        """.utf8)
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+        let tiles = try XCTUnwrap(manifest.grid?.nativeTiles())
+
+        XCTAssertEqual(tiles.count, 6)
+        XCTAssertEqual(tiles[0].title, "Docs")
+        XCTAssertEqual(tiles[0].normalizedColumnSpan, 2)
+        XCTAssertEqual(tiles[0].customIcon, .emoji("🌐"))
+        guard case .openURL(let url) = tiles[0].action else {
+            return XCTFail("Expected URL action")
+        }
+        XCTAssertEqual(url, "https://example.com")
+
+        XCTAssertEqual(tiles[1].title, "Count")
+        guard case .counter(let value) = tiles[1].action else {
+            return XCTFail("Expected counter action")
+        }
+        XCTAssertEqual(value, 4)
+
+        XCTAssertEqual(tiles[2].customIcon, .imagePath("~/icon.png"))
+        XCTAssertEqual(tiles[2].normalizedRowSpan, 1)
+        XCTAssertTrue(tiles[5].isEmpty)
+    }
+
+    func testGridMetadataCapsNativeTileCount() throws {
+        let data = Data("""
+        {"id":"agenda","entry":"agenda.html","served":true,
+         "grid":{"cols":20,"rows":20,"defaults":[]}}
+        """.utf8)
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+
+        XCTAssertEqual(manifest.grid?.nativeTileCount, PadModel.perPage)
+        XCTAssertEqual(manifest.grid?.nativeTiles().count, PadModel.perPage)
+    }
+
+    func testGridMetadataBuildsNativeMacroTile() throws {
+        let data = Data("""
+        {"id":"agenda","entry":"agenda.html","served":true,
+         "grid":{"cols":1,"rows":1,"defaults":[
+           {"label":"Prep","type":"macro","steps":[
+             {"kind":"key","value":"command+k"},
+             {"kind":"delay","value":"500"},
+             {"kind":"system","value":"config"},
+             {"kind":"cmd","value":"say ready"}
+           ]}
+         ]}}
+        """.utf8)
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+        let tile = try XCTUnwrap(manifest.grid?.nativeTiles().first)
+
+        guard case .macro(let steps) = tile.action else {
+            return XCTFail("Expected macro action")
+        }
+        XCTAssertEqual(steps.map(\.kind), [.key, .delay, .openSettings, .shell])
+        XCTAssertEqual(steps[0].value, "command+k")
+        XCTAssertEqual(steps[1].delayMilliseconds, 500)
+        XCTAssertEqual(steps[3].value, "say ready")
+    }
+
     func testManifestIgnoresMalformedGridMetadata() throws {
         let data = Data("""
         {"id":"agenda","entry":"agenda.html","served":true,
