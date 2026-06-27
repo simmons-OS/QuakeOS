@@ -569,7 +569,8 @@ final class DropInAppStore: ObservableObject {
         guard !app.manifest.served,
               var url = Self.containedURL(root: app.rootURL, relativePath: app.manifest.entry) else { return nil }
         if let fragment = Self.clientOptionsQuery(for: app.manifest.options,
-                                                  values: optionValuesByAppID[app.id] ?? [:]),
+                                                  values: optionValuesByAppID[app.id] ?? [:],
+                                                  includeGridHint: Self.hasVisibleGrid(for: app)),
            var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             components.percentEncodedFragment = fragment
             url = components.url ?? url
@@ -586,7 +587,8 @@ final class DropInAppStore: ObservableObject {
         components.port = Int(port)
         components.percentEncodedPath = "/apps/\(app.id)/\(Self.percentEncodedPath(app.manifest.entry))"
         components.percentEncodedQuery = Self.clientOptionsQuery(for: app.manifest.options,
-                                                                 values: optionValuesByAppID[app.id] ?? [:])
+                                                                 values: optionValuesByAppID[app.id] ?? [:],
+                                                                 includeGridHint: Self.hasVisibleGrid(for: app))
         return components.url
     }
 
@@ -838,15 +840,23 @@ final class DropInAppStore: ObservableObject {
     }
 
     static func clientOptionsQuery(for options: [DropInAppOption],
-                                   values: [String: String] = [:]) -> String? {
-        let queryItems = options.compactMap { option -> URLQueryItem? in
+                                   values: [String: String] = [:],
+                                   includeGridHint: Bool = false) -> String? {
+        var queryItems = options.compactMap { option -> URLQueryItem? in
             guard isClientOption(option), let value = values[option.key] ?? option.defaultValue else { return nil }
             return URLQueryItem(name: option.key, value: value)
+        }
+        if includeGridHint {
+            queryItems.append(URLQueryItem(name: "_grid", value: "1"))
         }
         guard !queryItems.isEmpty else { return nil }
         var components = URLComponents()
         components.queryItems = queryItems
         return components.percentEncodedQuery
+    }
+
+    private static func hasVisibleGrid(for app: DropInAppRecord) -> Bool {
+        app.manifest.grid?.nativeTiles().contains(where: { !$0.isEmpty }) == true
     }
 
     static func resolvedClientOptionValues(for options: [DropInAppOption],

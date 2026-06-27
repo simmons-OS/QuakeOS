@@ -69,6 +69,39 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(url.absoluteString, "http://127.0.0.1:49152/apps/clock/nested/index%20file%3F.html?theme=light")
     }
 
+    func testStaticLaunchURLAddsGridHintWhenNativeStripIsVisible() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":false,
+         "grid":{"cols":2,"rows":2,"defaults":[
+           {"label":"Docs","type":"url","value":"https://example.com"}
+         ]}}
+        """)
+        let store = DropInAppStore(rootURL: root)
+        let app = try XCTUnwrap(store.apps.first)
+
+        let url = try XCTUnwrap(store.staticLaunchURL(for: app))
+
+        XCTAssertEqual(url.fragment, "_grid=1")
+    }
+
+    func testServedLaunchURLAddsGridHintAfterClientOptions() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,
+         "options":[{"key":"theme","type":"text","default":"dark"}],
+         "grid":{"cols":2,"rows":2,"defaults":[
+           {"label":"Docs","type":"url","value":"https://example.com"}
+         ]}}
+        """)
+        let store = DropInAppStore(rootURL: root)
+        let app = try XCTUnwrap(store.apps.first)
+
+        let url = try XCTUnwrap(store.servedLaunchURL(for: app, port: 49152))
+
+        XCTAssertEqual(url.query, "theme=dark&_grid=1")
+    }
+
     func testOptionValuesPersistByAppID() throws {
         let root = temporaryDirectory()
         let defaults = temporaryDefaults()
@@ -264,6 +297,28 @@ final class DropInAppStoreTests: XCTestCase {
 
         XCTAssertEqual(manifest.grid?.nativeTileCount, PadModel.perPage)
         XCTAssertEqual(manifest.grid?.nativeTiles().count, PadModel.perPage)
+    }
+
+    func testDropInGridTileLayoutSkipsCoveredCells() throws {
+        let data = Data("""
+        {"id":"agenda","entry":"agenda.html","served":true,
+         "grid":{"cols":3,"rows":2,"defaults":[
+           {"label":"Wide","type":"url","value":"https://example.com","w":2,"h":2},
+           {"label":"Covered","type":"url","value":"https://example.org"},
+           {"label":"Visible","type":"url","value":"https://example.net"}
+         ]}}
+        """.utf8)
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+        let tiles = try XCTUnwrap(manifest.grid?.nativeTiles())
+
+        let frames = DropInGridTileLayout.frames(for: tiles, columns: 3, rows: 2)
+
+        XCTAssertEqual(frames.map(\.id), [0, 2, 5])
+        XCTAssertEqual(frames[0].tile.title, "Wide")
+        XCTAssertEqual(frames[0].columnSpan, 2)
+        XCTAssertEqual(frames[0].rowSpan, 2)
+        XCTAssertEqual(frames[1].tile.title, "Visible")
+        XCTAssertTrue(frames[2].tile.isEmpty)
     }
 
     func testGridMetadataBuildsNativeMacroTile() throws {
