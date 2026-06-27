@@ -178,15 +178,13 @@ private enum DropInAppGridTileMapper {
             return PadStore.emptyTile
         }
         let title = string("label", in: object) ?? string("title", in: object) ?? ""
-        let icon = string("icon", in: object)
-            ?? string("iconImage", in: object)
         let action = action(type: type, object: object)
         return Tile(title: title,
                     symbol: symbol(for: type),
                     tint: tint(for: type),
                     action: action,
                     editable: true,
-                    customIcon: customIcon(icon: icon, object: object),
+                    customIcon: customIcon(object: object),
                     columnSpan: int("w", in: object) ?? 1,
                     rowSpan: int("h", in: object) ?? 1)
     }
@@ -268,13 +266,23 @@ private enum DropInAppGridTileMapper {
         }
     }
 
-    private static func customIcon(icon: String?, object: [String: DropInAppJSONValue]) -> TileIcon? {
-        let trimmed = icon?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !trimmed.isEmpty else { return nil }
-        if string("iconType", in: object) == "image" {
-            return .imagePath(trimmed)
+    private static func customIcon(object: [String: DropInAppJSONValue]) -> TileIcon? {
+        switch string("iconType", in: object) ?? "emoji" {
+        case "image":
+            let path = string("iconImage", in: object) ?? string("icon", in: object) ?? ""
+            let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : .imagePath(trimmed)
+        case "url":
+            let url = string("iconUrl", in: object) ?? ""
+            let cachePath = string("iconCache", in: object) ?? ""
+            return TileIcon.imageURL(url: url, cachePath: cachePath).nonEmpty
+        case "app":
+            return nil
+        default:
+            let icon = string("icon", in: object) ?? ""
+            let trimmed = icon.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : .emoji(trimmed)
         }
-        return .emoji(trimmed)
     }
 
     private static func string(_ key: String, in object: [String: DropInAppJSONValue]) -> String? {
