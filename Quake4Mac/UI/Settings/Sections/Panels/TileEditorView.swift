@@ -195,6 +195,7 @@ struct TileInspectorRail: View {
         case "key":     return ("Sends a keystroke", str)
         case "text":    return ("Types text", str)
         case "paste":   return ("Pastes text", str)
+        case "counter": return ("Counts up or down", "\(int ?? 0)")
         case "shell":   return ("Runs a shell command", str)
         case "ascript": return ("Runs an AppleScript", str)
         case "system":
@@ -261,6 +262,7 @@ struct TileInspectorRail: View {
         case "key":     return .keyCombo(eValue)
         case "text":    return .typeText(eValue)
         case "paste":   return .pasteText(eValue)
+        case "counter": return .counter(value: eDelta)
         case "macro":   return .macro(eSteps)
         default:        return .none
         }
@@ -299,6 +301,7 @@ struct TileInspectorRail: View {
         case .keyCombo(let k):    eKind = "key";     eValue = k
         case .typeText(let t):    eKind = "text";    eValue = t
         case .pasteText(let t):   eKind = "paste";   eValue = t
+        case .counter(let value): eKind = "counter"; eDelta = value
         case .macro(let steps):   eKind = "macro";   eSteps = steps
         case .none:               eKind = "none"
         }
@@ -403,6 +406,7 @@ struct TileInspectorRail: View {
                             Text("None").tag("none"); Text("Open App").tag("app"); Text("Open URL").tag("url")
                             Text("Open File/Folder").tag("open"); Text("Keystroke").tag("key"); Text("Type Text").tag("text")
                             Text("Paste Text").tag("paste")
+                            Text("Counter").tag("counter")
                             Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("Lock Screen").tag("system")
                             Text("Brightness").tag("lum")
                             Text("Go to Page").tag("page"); Text("Macro Steps").tag("macro")
@@ -410,6 +414,7 @@ struct TileInspectorRail: View {
                         .labelsHidden().frame(maxWidth: .infinity)
                         .onChange(of: eKind) { newKind in
                             if newKind == "system" { eValue = SystemAction.lockScreen.rawValue }
+                            if newKind == "counter" { eDelta = 0 }
                             if newKind == "macro", eSteps.isEmpty { eSteps = [MacroStep.defaultStep()] }
                             applyInspector()
                         }
@@ -459,6 +464,13 @@ struct TileInspectorRail: View {
             labeledField("Text", placeholder: "Meeting notes")
         case "paste":
             labeledField("Text", placeholder: "Meeting notes")
+        case "counter":
+            HStack {
+                Text("Value").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary).frame(width: 70, alignment: .leading)
+                Stepper("\(eDelta)", value: $eDelta, in: -9999...9999, step: 1).labelsHidden()
+                Text("\(eDelta)").font(.system(size: 12).monospacedDigit()).foregroundColor(NeonTheme.textSecondary)
+                    .onChange(of: eDelta) { _ in applyInspector() }
+            }
         case "shell":
             labeledField("Command", placeholder: "open ~/Downloads")
         case "ascript":

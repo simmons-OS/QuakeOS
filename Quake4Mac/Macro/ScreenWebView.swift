@@ -143,6 +143,9 @@ enum ScreenModel {
             var keys: [[String: Any]] = []
             for tile in page.tiles {
                 var k: [String: Any] = ["title": tile.title]
+                if let counter = tile.counterValue {
+                    k["counter"] = counter
+                }
                 if let info = iconInfo(for: tile) {
                     k["icon"] = info.url
                     if let g = info.glow { k["glow"] = g }
