@@ -51,6 +51,24 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(url.fragment, "theme=light&enabled=false")
     }
 
+    func testServedLaunchURLUsesLoopbackPathAndClientOptionQuery() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"nested/index file?.html","served":true,"options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"token","type":"secret","default":"abc"}
+        ]}
+        """, extraFiles: ["nested/index file?.html": "<html></html>"])
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        let app = try XCTUnwrap(store.apps.first)
+
+        store.setOptionValue(appID: app.id, optionKey: "theme", value: "light")
+        let url = try XCTUnwrap(store.servedLaunchURL(for: app, port: 49152))
+
+        XCTAssertEqual(url.absoluteString, "http://127.0.0.1:49152/apps/clock/nested/index%20file%3F.html?theme=light")
+    }
+
     func testOptionValuesPersistByAppID() throws {
         let root = temporaryDirectory()
         let defaults = temporaryDefaults()
@@ -71,6 +89,52 @@ final class DropInAppStoreTests: XCTestCase {
         ]
 
         XCTAssertEqual(DropInAppStore.clientOptions(options).map(\.key), ["theme"])
+    }
+
+    func testLoopbackServerParsesServedAppRequests() {
+        XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/index.html")?.appID, "clock")
+        XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/nested%20file.html")?.relativePath,
+                       "nested file.html")
+        XCTAssertNil(DropInAppLoopbackServer.servedAppRequest("/app/clock/index.html"))
+        XCTAssertNil(DropInAppLoopbackServer.servedAppRequest("/apps/Bad/index.html"))
+    }
+
+    func testLoopbackHostCheckRequiresCurrentLoopbackPort() {
+        let good = "GET /apps/clock/index.html HTTP/1.1\r\nHost: 127.0.0.1:49152\r\n\r\n"
+        let local = "GET /apps/clock/index.html HTTP/1.1\r\nHost: localhost:49152\r\n\r\n"
+        let badPort = "GET /apps/clock/index.html HTTP/1.1\r\nHost: 127.0.0.1:49153\r\n\r\n"
+        let badHost = "GET /apps/clock/index.html HTTP/1.1\r\nHost: example.com:49152\r\n\r\n"
+
+        XCTAssertTrue(DropInAppLoopbackServer.hostIsLoopback(request: good, port: 49152))
+        XCTAssertTrue(DropInAppLoopbackServer.hostIsLoopback(request: local, port: 49152))
+        XCTAssertFalse(DropInAppLoopbackServer.hostIsLoopback(request: badPort, port: 49152))
+        XCTAssertFalse(DropInAppLoopbackServer.hostIsLoopback(request: badHost, port: 49152))
+    }
+
+    func testLoopbackServerServesContainedServedAppFile() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true}
+        """, extraFiles: ["index.html": "<html>served</html>"])
+        let store = DropInAppStore(rootURL: root)
+        let app = try XCTUnwrap(store.apps.first)
+        let server = DropInAppLoopbackServer(store: store)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        let url = try XCTUnwrap(store.servedLaunchURL(for: app, port: port))
+        let done = expectation(description: "served app response")
+
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), "<html>served</html>")
+            XCTAssertNotNil((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Security-Policy"))
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
     }
 
     func testHomeCatalogIncludesStaticDropInAppsOnly() throws {
@@ -198,6 +262,14 @@ final class DropInAppStoreTests: XCTestCase {
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
         return defaults
+    }
+
+    private func waitForPort(_ server: DropInAppLoopbackServer) throws -> UInt16 {
+        let deadline = Date().addingTimeInterval(2)
+        while server.port == nil && Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        return try XCTUnwrap(server.port)
     }
 
     private func writeApp(root: URL, folder: String, manifest: String, extraFiles: [String: String] = [:]) throws {

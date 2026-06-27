@@ -33,6 +33,7 @@
 		DA6B00000000000000000021 /* DropInAppsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000011 /* DropInAppsSettingsView.swift */; };
 		DA6B00000000000000000022 /* DropInAppStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000012 /* DropInAppStoreTests.swift */; };
 		DA6B00000000000000000023 /* DropInAppView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000014 /* DropInAppView.swift */; };
+		DA6B00000000000000000024 /* DropInAppLoopbackServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = DA6B00000000000000000015 /* DropInAppLoopbackServer.swift */; };
 		AA0000000000000000000013 /* Quake4MacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000010 /* Quake4MacApp.swift */; };
 		AA0000000000000000000091 /* PanelWeb.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000090 /* PanelWeb.swift */; };
 		AA0000000000000000000014 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* ContentView.swift */; };
@@ -89,6 +90,7 @@
 		DA6B00000000000000000011 /* DropInAppsSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppsSettingsView.swift; sourceTree = "<group>"; };
 		DA6B00000000000000000012 /* DropInAppStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppStoreTests.swift; sourceTree = "<group>"; };
 		DA6B00000000000000000014 /* DropInAppView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppView.swift; sourceTree = "<group>"; };
+		DA6B00000000000000000015 /* DropInAppLoopbackServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DropInAppLoopbackServer.swift; sourceTree = "<group>"; };
 		AA0000000000000000000006 /* Quake4Mac.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Quake4Mac.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA0000000000000000000010 /* Quake4MacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Quake4MacApp.swift; sourceTree = "<group>"; };
 		AA0000000000000000000090 /* PanelWeb.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PanelWeb.swift; sourceTree = "<group>"; };
@@ -249,6 +251,7 @@
 			children = (
 				DA6B00000000000000000010 /* DropInAppStore.swift */,
 				DA6B00000000000000000014 /* DropInAppView.swift */,
+				DA6B00000000000000000015 /* DropInAppLoopbackServer.swift */,
 			);
 			path = Apps;
 			sourceTree = "<group>";
@@ -551,6 +554,7 @@
 				DA5A00000000000000000024 /* WebDashboardsSettingsView.swift in Sources */,
 				DA6B00000000000000000020 /* DropInAppStore.swift in Sources */,
 				DA6B00000000000000000023 /* DropInAppView.swift in Sources */,
+				DA6B00000000000000000024 /* DropInAppLoopbackServer.swift in Sources */,
 				DA6B00000000000000000021 /* DropInAppsSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
