@@ -111,13 +111,20 @@ final class DropInAppStore: ObservableObject {
 
     @Published private(set) var apps: [DropInAppRecord] = []
     @Published private(set) var issues: [DropInAppIssue] = []
+    @Published private(set) var optionValuesByAppID: [String: [String: String]] = [:]
 
     let rootURL: URL
     private let fileManager: FileManager
+    private let defaults: UserDefaults
+    private static let optionValuesKey = "dropInApps.optionValues"
 
-    init(rootURL: URL = DropInAppStore.defaultAppsDirectory(), fileManager: FileManager = .default) {
+    init(rootURL: URL = DropInAppStore.defaultAppsDirectory(),
+         fileManager: FileManager = .default,
+         defaults: UserDefaults = .standard) {
         self.rootURL = rootURL
         self.fileManager = fileManager
+        self.defaults = defaults
+        optionValuesByAppID = defaults.dictionary(forKey: Self.optionValuesKey) as? [String: [String: String]] ?? [:]
         refresh()
     }
 
@@ -128,12 +135,31 @@ final class DropInAppStore: ObservableObject {
     func staticLaunchURL(for app: DropInAppRecord) -> URL? {
         guard !app.manifest.served,
               var url = Self.containedURL(root: app.rootURL, relativePath: app.manifest.entry) else { return nil }
-        if let fragment = Self.staticOptionsFragment(for: app.manifest.options),
+        if let fragment = Self.staticOptionsFragment(for: app.manifest.options,
+                                                     values: optionValuesByAppID[app.id] ?? [:]),
            var components = URLComponents(url: url, resolvingAgainstBaseURL: false) {
             components.percentEncodedFragment = fragment
             url = components.url ?? url
         }
         return url
+    }
+
+    func optionValue(appID: String, option: DropInAppOption) -> String {
+        optionValuesByAppID[appID]?[option.key] ?? option.defaultValue ?? ""
+    }
+
+    func setOptionValue(appID: String, optionKey: String, value: String) {
+        var next = optionValuesByAppID
+        next[appID, default: [:]][optionKey] = value
+        optionValuesByAppID = next
+        saveOptionValues()
+    }
+
+    func resetOptionValues(appID: String) {
+        var next = optionValuesByAppID
+        next[appID] = nil
+        optionValuesByAppID = next
+        saveOptionValues()
     }
 
     func importFolder(at sourceURL: URL) -> Result<DropInAppRecord, DropInAppImportError> {
@@ -233,9 +259,14 @@ final class DropInAppStore: ObservableObject {
         return resolved
     }
 
-    static func staticOptionsFragment(for options: [DropInAppOption]) -> String? {
+    static func clientOptions(_ options: [DropInAppOption]) -> [DropInAppOption] {
+        options.filter(isClientOption)
+    }
+
+    static func staticOptionsFragment(for options: [DropInAppOption],
+                                      values: [String: String] = [:]) -> String? {
         let queryItems = options.compactMap { option -> URLQueryItem? in
-            guard option.type != "secret", !option.serverOnly, let value = option.defaultValue else { return nil }
+            guard isClientOption(option), let value = values[option.key] ?? option.defaultValue else { return nil }
             return URLQueryItem(name: option.key, value: value)
         }
         guard !queryItems.isEmpty else { return nil }
@@ -244,9 +275,17 @@ final class DropInAppStore: ObservableObject {
         return components.percentEncodedQuery
     }
 
+    private static func isClientOption(_ option: DropInAppOption) -> Bool {
+        option.type != "secret" && !option.serverOnly
+    }
+
     private enum ScanResult {
         case success(DropInAppRecord)
         case failure(String)
+    }
+
+    private func saveOptionValues() {
+        defaults.set(optionValuesByAppID, forKey: Self.optionValuesKey)
     }
 
     private func scan(folder: URL) -> ScanResult {

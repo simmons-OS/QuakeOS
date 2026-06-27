@@ -32,6 +32,47 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertEqual(url.fragment, "theme=dark")
     }
 
+    func testStaticLaunchURLUsesSavedClientOptionValues() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","options":[
+          {"key":"theme","type":"text","default":"dark"},
+          {"key":"enabled","type":"boolean","default":true}
+        ]}
+        """)
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+        let app = try XCTUnwrap(store.apps.first)
+
+        store.setOptionValue(appID: app.id, optionKey: "theme", value: "light")
+        store.setOptionValue(appID: app.id, optionKey: "enabled", value: "false")
+        let url = try XCTUnwrap(store.staticLaunchURL(for: app))
+
+        XCTAssertEqual(url.fragment, "theme=light&enabled=false")
+    }
+
+    func testOptionValuesPersistByAppID() throws {
+        let root = temporaryDirectory()
+        let defaults = temporaryDefaults()
+        let option = DropInAppOption(key: "theme", label: "Theme", type: "text", defaultValue: "dark")
+        let store = DropInAppStore(rootURL: root, defaults: defaults)
+
+        store.setOptionValue(appID: "clock", optionKey: "theme", value: "light")
+        let reloaded = DropInAppStore(rootURL: root, defaults: defaults)
+
+        XCTAssertEqual(reloaded.optionValue(appID: "clock", option: option), "light")
+    }
+
+    func testClientOptionsExcludeSecretsAndServerOnlyValues() {
+        let options = [
+            DropInAppOption(key: "theme", label: "Theme", type: "text"),
+            DropInAppOption(key: "token", label: "Token", type: "secret"),
+            DropInAppOption(key: "hostToken", label: "Host Token", type: "text", serverOnly: true)
+        ]
+
+        XCTAssertEqual(DropInAppStore.clientOptions(options).map(\.key), ["theme"])
+    }
+
     func testHomeCatalogIncludesStaticDropInAppsOnly() throws {
         let root = temporaryDirectory()
         try writeApp(root: root, folder: "static", manifest: """
@@ -150,6 +191,13 @@ final class DropInAppStoreTests: XCTestCase {
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    }
+
+    private func temporaryDefaults() -> UserDefaults {
+        let suiteName = "QuakeOS.DropInAppStoreTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        return defaults
     }
 
     private func writeApp(root: URL, folder: String, manifest: String, extraFiles: [String: String] = [:]) throws {
