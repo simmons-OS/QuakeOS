@@ -123,6 +123,18 @@ final class TileSpecActionTests: XCTestCase {
         }
         XCTAssertEqual(text, "Status update")
     }
+
+    func testCounterActionRoundTripsThroughTileSpecJSON() throws {
+        let spec = TileSpec(title: "Count", symbol: "number", tint: .orange,
+                            category: "Utilities", action: .counter(value: 7))
+        let data = try JSONEncoder().encode(spec)
+        let decoded = try JSONDecoder().decode(TileSpec.self, from: data)
+
+        guard case .counter(let value) = decoded.action else {
+            return XCTFail("Expected counter action")
+        }
+        XCTAssertEqual(value, 7)
+    }
 }
 
 final class TileIconTests: XCTestCase {
@@ -200,5 +212,25 @@ final class TileIconTests: XCTestCase {
         let icon = try XCTUnwrap(keys.first?["icon"] as? String)
 
         XCTAssertTrue(icon.hasPrefix("data:image/png;base64,"))
+    }
+
+    func testCounterValueRendersIntoScreenModel() throws {
+        let tile = Tile(title: "Count", symbol: "number", tint: .orange, action: .counter(value: 7))
+        let encoded = try XCTUnwrap(ScreenModel.buildModelEnc(pages: [PadPage(name: "Test", tiles: [tile])]))
+        let json = try XCTUnwrap(encoded.removingPercentEncoding)
+        let data = try XCTUnwrap(json.data(using: .utf8))
+        let pages = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        let keys = try XCTUnwrap(pages.first?["keys"] as? [[String: Any]])
+        let counter = try XCTUnwrap(keys.first?["counter"] as? Int)
+
+        XCTAssertEqual(counter, 7)
+    }
+}
+
+final class CounterTileTests: XCTestCase {
+    func testCounterDeltaUsesTileHalves() {
+        XCTAssertEqual(PadModel.counterDelta(forNormalizedPoint: CGPoint(x: 0.01, y: 0.25)), -1)
+        XCTAssertEqual(PadModel.counterDelta(forNormalizedPoint: CGPoint(x: 0.07, y: 0.25)), 1)
+        XCTAssertEqual(PadModel.counterDelta(forNormalizedPoint: CGPoint(x: 1, y: 0.25)), 1)
     }
 }

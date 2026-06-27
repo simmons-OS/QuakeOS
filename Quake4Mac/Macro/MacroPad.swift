@@ -24,6 +24,7 @@ enum PadAction {
     case keyCombo(String)              // send a key combo to the focused app via System Events
     case typeText(String)              // type literal text into the focused app
     case pasteText(String)             // place text on the clipboard and paste it
+    case counter(value: Int)           // persistent +/- tile counter
     case macro([MacroStep])            // run ordered macro steps without overlap
     case none
 }
@@ -394,6 +395,11 @@ struct Tile: Identifiable {
         return nil
     }
 
+    var counterValue: Int? {
+        if case .counter(let value) = action { return value }
+        return nil
+    }
+
     var allowsAutomaticWebIcon: Bool {
         customIcon == nil && image == nil
     }
@@ -701,10 +707,28 @@ final class PadModel: ObservableObject {
         let tile = current.tiles[idx]
         pressedTileID = tile.id
         lastFired = tile.title
-        run(tile.action)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
-            if self?.pressedTileID == tile.id { self?.pressedTileID = nil }
+        if case .counter = tile.action {
+            let delta = Self.counterDelta(forNormalizedPoint: p)
+            if let value = PadStore.shared.adjustCounter(page: pageIndex, slot: idx, delta: delta) {
+                lastFired = "\(tile.title) \(value)"
+            }
+            releasePressedTile(tile.id)
+            return
         }
+        run(tile.action)
+        releasePressedTile(tile.id)
+    }
+
+    private func releasePressedTile(_ tileID: UUID) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak self] in
+            if self?.pressedTileID == tileID { self?.pressedTileID = nil }
+        }
+    }
+
+    static func counterDelta(forNormalizedPoint p: CGPoint) -> Int {
+        let scaledX = min(max(p.x * CGFloat(cols), 0), CGFloat(cols).nextDown)
+        let cellX = scaledX - floor(scaledX)
+        return cellX < 0.5 ? -1 : 1
     }
 
     // MARK: Action execution
@@ -739,6 +763,8 @@ final class PadModel: ObservableObject {
             runAppleScript(MacroText.appleScriptSource(for: text))
         case .pasteText(let text):
             pasteText(text)
+        case .counter:
+            break
         case .macro(let steps):
             runMacro(steps)
         case .none:
@@ -892,6 +918,21 @@ final class PadStore: ObservableObject {
         save()
     }
 
+    @discardableResult
+    func adjustCounter(page: Int, slot: Int, delta: Int) -> Int? {
+        guard pages.indices.contains(page), slot >= 0, slot < PadModel.perPage else { return nil }
+        var tiles = pages[page].tiles
+        guard tiles.indices.contains(slot), case .counter(let value) = tiles[slot].action else { return nil }
+        let next = value + delta
+        let tile = tiles[slot]
+        tiles[slot] = Tile(title: tile.title, symbol: tile.symbol, tint: tile.tint, action: .counter(value: next),
+                           image: tile.image, editable: tile.editable, customIcon: tile.customIcon)
+        pages[page].tiles = tiles
+        version += 1
+        save()
+        return next
+    }
+
     static let emptyTile = Tile(title: "", symbol: "square.dashed", tint: .gray, action: .none)
 
     // MARK: Persistence (JSON in Application Support/Quake4Mac/pages.json)
@@ -932,6 +973,7 @@ private struct ActionDTO: Codable {
         case .keyCombo(let k):    kind = "key";     s = k
         case .typeText(let t):    kind = "text";    s = t
         case .pasteText(let t):   kind = "paste";   s = t
+        case .counter(let value): kind = "counter"; i = value
         case .macro(let m):       kind = "macro";   steps = m
         case .none:               kind = "none"
         }
@@ -949,6 +991,7 @@ private struct ActionDTO: Codable {
         case "key":     return .keyCombo(s ?? "")
         case "text":    return .typeText(s ?? "")
         case "paste":   return .pasteText(s ?? "")
+        case "counter": return .counter(value: i ?? 0)
         case "macro":   return .macro(steps ?? [])
         default:        return .none
         }
