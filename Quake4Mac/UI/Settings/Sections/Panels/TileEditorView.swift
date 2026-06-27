@@ -407,7 +407,7 @@ struct TileInspectorRail: View {
                             Text("Open File/Folder").tag("open"); Text("Keystroke").tag("key"); Text("Type Text").tag("text")
                             Text("Paste Text").tag("paste")
                             Text("Counter").tag("counter")
-                            Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("Lock Screen").tag("system")
+                            Text("Shell").tag("shell"); Text("AppleScript").tag("ascript"); Text("System").tag("system")
                             Text("Brightness").tag("lum")
                             Text("Go to Page").tag("page"); Text("Macro Steps").tag("macro")
                         }
@@ -476,9 +476,24 @@ struct TileInspectorRail: View {
         case "ascript":
             labeledField("Script", placeholder: "tell application …")
         case "system":
-            Text("Locks this Mac using the standard macOS Lock Screen shortcut.")
-                .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("System Action").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary)
+                Picker("", selection: Binding(
+                    get: { SystemAction(rawValue: eValue) ?? .lockScreen },
+                    set: { action in
+                        eValue = action.rawValue
+                        applyInspector()
+                    }
+                )) {
+                    ForEach(SystemAction.allCases) { action in
+                        Text(action.title).tag(action)
+                    }
+                }
+                .labelsHidden().frame(maxWidth: .infinity)
+                Text(systemActionDescription(SystemAction(rawValue: eValue) ?? .lockScreen))
+                    .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         case "lum":
             HStack {
                 Text("Delta").font(.system(size: 12)).foregroundColor(NeonTheme.textSecondary).frame(width: 70, alignment: .leading)
@@ -632,8 +647,8 @@ struct TileInspectorRail: View {
                     macroStepTextField(index)
                     pill("Choose File...", NeonTheme.purple) { chooseMacroStepPath(index) }
                 }
-            case .lockScreen:
-                Text("Locks this Mac.")
+            case .lockScreen, .openSettings:
+                Text(macroStepSystemDescription(eSteps[index].kind))
                     .font(.system(size: 11)).foregroundColor(NeonTheme.textTertiary)
             default:
                 macroStepTextField(index)
@@ -713,9 +728,29 @@ struct TileInspectorRail: View {
         case .openPath: return "~/Downloads"
         case .shell: return "open ~/Downloads"
         case .appleScript: return "tell application …"
-        case .lockScreen: return ""
+        case .lockScreen, .openSettings: return ""
         case .page: return PadStore.shared.pages.first?.name ?? "Apps"
         case .delay, .brightness: return ""
+        }
+    }
+
+    private func systemActionDescription(_ action: SystemAction) -> String {
+        switch action {
+        case .lockScreen:
+            return "Locks this Mac using the standard macOS Lock Screen shortcut."
+        case .openSettings:
+            return "Opens the QuakeOS Settings window on a normal monitor."
+        }
+    }
+
+    private func macroStepSystemDescription(_ kind: MacroStepKind) -> String {
+        switch kind {
+        case .lockScreen:
+            return "Locks this Mac."
+        case .openSettings:
+            return "Opens QuakeOS Settings."
+        default:
+            return ""
         }
     }
 

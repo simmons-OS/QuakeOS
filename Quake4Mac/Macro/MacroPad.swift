@@ -29,19 +29,25 @@ enum PadAction {
     case none
 }
 
-enum SystemAction: String, Codable, Hashable {
+enum SystemAction: String, Codable, CaseIterable, Identifiable, Hashable {
     case lockScreen
+    case openSettings = "config"
+
+    var id: String { rawValue }
 
     var title: String {
         switch self {
         case .lockScreen: return "Lock Screen"
+        case .openSettings: return "Open Settings"
         }
     }
 
-    var appleScriptSource: String {
+    var appleScriptSource: String? {
         switch self {
         case .lockScreen:
-            return MacroKeyCombo.appleScriptSource(for: "control+command+q") ?? ""
+            return MacroKeyCombo.appleScriptSource(for: "control+command+q")
+        case .openSettings:
+            return nil
         }
     }
 }
@@ -214,6 +220,7 @@ enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
     case shell
     case appleScript
     case lockScreen
+    case openSettings
     case page
     case brightness
 
@@ -231,6 +238,7 @@ enum MacroStepKind: String, Codable, CaseIterable, Identifiable, Hashable {
         case .shell: return "Shell"
         case .appleScript: return "AppleScript"
         case .lockScreen: return "Lock Screen"
+        case .openSettings: return "Open Settings"
         case .page: return "Go to Page"
         case .brightness: return "Brightness"
         }
@@ -289,6 +297,7 @@ struct MacroStep: Identifiable, Codable, Hashable {
         case .shell: return .shell(value)
         case .appleScript: return .appleScript(value)
         case .lockScreen: return .system(.lockScreen)
+        case .openSettings: return .system(.openSettings)
         case .page: return .openPage(value)
         case .brightness: return .luminance(delta: intValue)
         }
@@ -752,7 +761,7 @@ final class PadModel: ObservableObject {
         case .appleScript(let src):
             runAppleScript(src)
         case .system(let action):
-            runAppleScript(action.appleScriptSource)
+            runSystemAction(action)
         case .luminance(let d):
             input.setLuminance(input.luminance + d)
         case .openPage(let name):
@@ -775,6 +784,15 @@ final class PadModel: ObservableObject {
     private func runAppleScript(_ source: String) {
         var err: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&err)
+    }
+
+    private func runSystemAction(_ action: SystemAction) {
+        switch action {
+        case .lockScreen:
+            if let source = action.appleScriptSource { runAppleScript(source) }
+        case .openSettings:
+            NotificationCenter.default.post(name: .quakeOpenSettingsRequested, object: nil)
+        }
     }
 
     private func pasteText(_ text: String) {

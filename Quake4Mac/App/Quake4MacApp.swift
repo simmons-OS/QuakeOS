@@ -9,6 +9,10 @@ import AppKit
 import Combine
 import IOKit.pwr_mgt
 
+extension Notification.Name {
+    static let quakeOpenSettingsRequested = Notification.Name("quakeOpenSettingsRequested")
+}
+
 // MARK: - App-wide state
 
 final class AppState: ObservableObject {
@@ -136,6 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in self?.scheduleReattach() }
+        NotificationCenter.default.addObserver(
+            forName: .quakeOpenSettingsRequested, object: nil, queue: .main
+        ) { [weak self] _ in self?.openSettingsNew() }
 
         setupMenuBar()
 
