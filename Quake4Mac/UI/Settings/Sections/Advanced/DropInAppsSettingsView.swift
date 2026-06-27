@@ -14,7 +14,10 @@ struct DropInAppsSettingsView: View {
                            subtitle: "User-installed panel apps discovered from your QuakeOS app folder.")
 
             HStack(alignment: .top, spacing: 16) {
-                folderCard
+                VStack(alignment: .leading, spacing: 16) {
+                    folderCard
+                    serverRuntimeCard
+                }
                     .frame(minWidth: 300, maxWidth: 380, alignment: .top)
                 libraryCard
                     .frame(maxWidth: 680, alignment: .top)
@@ -35,6 +38,33 @@ struct DropInAppsSettingsView: View {
             Button("Cancel", role: .cancel) { pendingHostCodeImport = nil }
         } message: {
             Text("This drop-in app contains host-side code. Only import it if you trust the source.")
+        }
+    }
+
+    private var serverRuntimeCard: some View {
+        let status = DropInAppNodeServerActionHandler.runtimeStatus()
+        return NeonCard("Server Modules") {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: status.isAvailable ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(status.isAvailable ? .green.opacity(0.9) : NeonTheme.magenta)
+                    Text(status.isAvailable ? "Node runtime ready" : "Node runtime unavailable")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(NeonTheme.textPrimary)
+                }
+                Text(status.displayPath)
+                    .font(.system(size: 11).monospaced())
+                    .foregroundColor(status.isAvailable ? NeonTheme.textSecondary : NeonTheme.textTertiary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if !status.isAvailable {
+                    Text("Set QUAKEOS_NODE_PATH before launching QuakeOS.")
+                        .font(.system(size: 11))
+                        .foregroundColor(NeonTheme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .padding(.vertical, 6)
         }
     }
 
@@ -71,14 +101,15 @@ struct DropInAppsSettingsView: View {
     }
 
     private var libraryCard: some View {
-        NeonCard("Discovered Apps") {
+        let nodeRuntimeStatus = DropInAppNodeServerActionHandler.runtimeStatus()
+        return NeonCard("Discovered Apps") {
             VStack(alignment: .leading, spacing: 12) {
                 if store.apps.isEmpty {
                     emptyState
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
                         ForEach(store.apps) { app in
-                            appRow(app)
+                            appRow(app, nodeRuntimeStatus: nodeRuntimeStatus)
                         }
                     }
                 }
@@ -103,7 +134,7 @@ struct DropInAppsSettingsView: View {
         .padding(.vertical, 8)
     }
 
-    private func appRow(_ app: DropInAppRecord) -> some View {
+    private func appRow(_ app: DropInAppRecord, nodeRuntimeStatus: DropInAppNodeRuntimeStatus) -> some View {
         let options = app.manifest.options
         return VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 12) {
@@ -125,13 +156,13 @@ struct DropInAppsSettingsView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                if app.hasHostCode {
-                    Text("HOST CODE NOT RUN")
+                if let hostCodeBadge = hostCodeBadge(for: app, nodeRuntimeStatus: nodeRuntimeStatus) {
+                    Text(hostCodeBadge.title)
                         .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(NeonTheme.magenta)
+                        .foregroundColor(hostCodeBadge.color)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)
-                        .background(Capsule().fill(NeonTheme.magenta.opacity(0.12)))
+                        .background(Capsule().fill(hostCodeBadge.color.opacity(0.12)))
                 }
                 if !options.isEmpty {
                     Button { store.resetOptionValues(appID: app.id) } label: {
@@ -210,8 +241,22 @@ struct DropInAppsSettingsView: View {
     }
 
     private func runtimeLabel(for app: DropInAppRecord) -> String {
-        if app.hasHostCode { return "Served via loopback; host code disabled" }
+        if app.manifest.server != nil { return "Served via loopback; server module" }
+        if app.hasHostCode { return "Static file; executable files detected" }
         return app.manifest.served ? "Served via loopback" : "Static file"
+    }
+
+    private func hostCodeBadge(for app: DropInAppRecord,
+                               nodeRuntimeStatus: DropInAppNodeRuntimeStatus) -> (title: String, color: Color)? {
+        if app.manifest.server != nil {
+            return nodeRuntimeStatus.isAvailable
+                ? ("SERVER MODULE READY", .green.opacity(0.9))
+                : ("NODE MISSING", NeonTheme.magenta)
+        }
+        if app.hasHostCode {
+            return ("HOST CODE", NeonTheme.magenta)
+        }
+        return nil
     }
 
     private var issueList: some View {
