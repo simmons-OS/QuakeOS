@@ -145,6 +145,24 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertNil(options["hostToken"])
     }
 
+    func testManifestDecodesProxyAllowRules() throws {
+        let data = Data("""
+        {"id":"proxy","entry":"index.html","served":true,
+         "proxy":{"methods":["GET"],"verifySslOption":"verifySsl","allow":[
+           {"option":"host"},
+           {"pattern":"^https://api\\\\.example\\\\.com/"}
+         ]}}
+        """.utf8)
+
+        let manifest = try JSONDecoder().decode(DropInAppManifest.self, from: data)
+
+        XCTAssertEqual(manifest.proxy?.methods, ["GET"])
+        XCTAssertEqual(manifest.proxy?.verifySslOption, "verifySsl")
+        XCTAssertEqual(manifest.proxy?.allow.count, 2)
+        XCTAssertEqual(manifest.proxy?.allow.first?.option, "host")
+        XCTAssertEqual(manifest.proxy?.allow.last?.pattern, #"^https://api\.example\.com/"#)
+    }
+
     func testLoopbackServerParsesServedAppRequests() {
         XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/index.html")?.appID, "clock")
         XCTAssertEqual(DropInAppLoopbackServer.servedAppRequest("/apps/clock/nested%20file.html")?.relativePath,
@@ -171,6 +189,16 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertNil(DropInAppLoopbackServer.appOpenRequest("/app-config?app=clock"))
     }
 
+    func testLoopbackServerParsesAppProxyTarget() throws {
+        let target = "/app-proxy?url=https%3A%2F%2Fapi.example.com%2Fdata%3Fq%3D1"
+        let request = try XCTUnwrap(DropInAppLoopbackServer.appProxyTarget(target))
+
+        XCTAssertEqual(request.absoluteString, "https://api.example.com/data?q=1")
+        XCTAssertNil(DropInAppLoopbackServer.appProxyTarget("/app-proxy"))
+        XCTAssertNil(DropInAppLoopbackServer.appProxyTarget("/app-proxy?url=file%3A%2F%2F%2Ftmp%2Fsecret"))
+        XCTAssertNil(DropInAppLoopbackServer.appProxyTarget("/app-api/open?url=https%3A%2F%2Fapi.example.com"))
+    }
+
     func testLoopbackHostCheckRequiresCurrentLoopbackPort() {
         let good = "GET /apps/clock/index.html HTTP/1.1\r\nHost: 127.0.0.1:49152\r\n\r\n"
         let local = "GET /apps/clock/index.html HTTP/1.1\r\nHost: localhost:49152\r\n\r\n"
@@ -194,6 +222,41 @@ final class DropInAppStoreTests: XCTestCase {
         XCTAssertTrue(DropInAppLoopbackServer.isSameOrigin(request: referer, port: 49152))
         XCTAssertFalse(DropInAppLoopbackServer.isSameOrigin(request: cross, port: 49152))
         XCTAssertFalse(DropInAppLoopbackServer.isSameOrigin(request: "GET / HTTP/1.1\r\n\r\n", port: 49152))
+    }
+
+    func testLoopbackRequestingAppIDRequiresServedAppReferer() {
+        let request = """
+        GET /app-proxy?url=https%3A%2F%2Fapi.example.com HTTP/1.1\r
+        Referer: http://127.0.0.1:49152/apps/clock/index.html\r
+        \r
+
+        """
+        XCTAssertEqual(DropInAppLoopbackServer.requestingAppID(request: request, port: 49152), "clock")
+        XCTAssertNil(DropInAppLoopbackServer.requestingAppID(request: request, port: 49153))
+        XCTAssertNil(DropInAppLoopbackServer.requestingAppID(request: "GET / HTTP/1.1\r\n\r\n", port: 49152))
+    }
+
+    func testProxyAllowRulesMatchOptionBaseAndPublicPatternsOnly() throws {
+        XCTAssertTrue(DropInAppLoopbackServer.proxyOptionRuleAllows(
+            baseValue: "http://192.168.1.10/api",
+            target: try XCTUnwrap(URL(string: "http://192.168.1.10/api/state"))
+        ))
+        XCTAssertFalse(DropInAppLoopbackServer.proxyOptionRuleAllows(
+            baseValue: "http://192.168.1.10/api",
+            target: try XCTUnwrap(URL(string: "http://192.168.1.10/other"))
+        ))
+        XCTAssertTrue(DropInAppLoopbackServer.proxyPatternRuleAllows(
+            pattern: #"^https://api\.example\.com/"#,
+            target: try XCTUnwrap(URL(string: "https://api.example.com/data"))
+        ))
+        XCTAssertFalse(DropInAppLoopbackServer.proxyPatternRuleAllows(
+            pattern: #".*"#,
+            target: try XCTUnwrap(URL(string: "http://127.0.0.1:8000/private"))
+        ))
+        XCTAssertFalse(DropInAppLoopbackServer.proxyPatternRuleAllows(
+            pattern: #".*"#,
+            target: try XCTUnwrap(URL(string: "http://192.168.1.10/private"))
+        ))
     }
 
     func testLoopbackServerServesContainedServedAppFile() throws {
@@ -254,6 +317,73 @@ final class DropInAppStoreTests: XCTestCase {
             XCTAssertEqual(options?["theme"] as? String, "dark")
             XCTAssertEqual(options?["seconds"] as? Bool, true)
             XCTAssertNil(options?["token"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerProxiesAllowedSameOriginAppRequest() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,
+         "proxy":{"methods":["GET"],"allow":[{"pattern":"^https://api\\\\.example\\\\.com/"}]}}
+        """)
+        let fetcher = ProxyFetchRecorder(response: DropInAppProxyResponse(
+            status: 200,
+            contentType: "application/json",
+            body: Data(#"{"ok":true}"#.utf8)
+        ))
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root),
+                                             fetchProxyURL: fetcher.fetch)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appProxyURL(port: port, targetURL: "https://api.example.com/data"))
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "app proxy response")
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            XCTAssertEqual((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"),
+                           "application/json")
+            XCTAssertEqual(String(data: data ?? Data(), encoding: .utf8), #"{"ok":true}"#)
+            XCTAssertEqual(fetcher.urls.map(\.absoluteString), ["https://api.example.com/data"])
+            done.fulfill()
+        }.resume()
+
+        wait(for: [done], timeout: 3)
+    }
+
+    func testLoopbackServerRejectsDisallowedProxyRequest() throws {
+        let root = temporaryDirectory()
+        try writeApp(root: root, folder: "clock", manifest: """
+        {"id":"clock","entry":"index.html","served":true,
+         "proxy":{"methods":["GET"],"allow":[{"pattern":"^https://api\\\\.example\\\\.com/"}]}}
+        """)
+        let fetcher = ProxyFetchRecorder(response: DropInAppProxyResponse(
+            status: 200,
+            contentType: "text/plain",
+            body: Data("ok".utf8)
+        ))
+        let server = DropInAppLoopbackServer(store: DropInAppStore(rootURL: root),
+                                             fetchProxyURL: fetcher.fetch)
+        defer { server.stop() }
+
+        server.start()
+        let port = try waitForPort(server)
+        var request = URLRequest(url: try appProxyURL(port: port, targetURL: "https://evil.example.com/data"))
+        request.setValue("same-origin", forHTTPHeaderField: "Sec-Fetch-Site")
+        request.setValue("http://127.0.0.1:\(port)/apps/clock/index.html", forHTTPHeaderField: "Referer")
+        let done = expectation(description: "app proxy rejection")
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            XCTAssertNil(error)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 403)
+            XCTAssertTrue(fetcher.urls.isEmpty)
             done.fulfill()
         }.resume()
 
@@ -662,6 +792,18 @@ final class DropInAppStoreTests: XCTestCase {
         return try XCTUnwrap(components.url)
     }
 
+    private func appProxyURL(port: UInt16, targetURL: String) throws -> URL {
+        var components = URLComponents()
+        components.scheme = "http"
+        components.host = "127.0.0.1"
+        components.port = Int(port)
+        components.path = "/app-proxy"
+        components.queryItems = [
+            URLQueryItem(name: "url", value: targetURL)
+        ]
+        return try XCTUnwrap(components.url)
+    }
+
     private func writeApp(root: URL, folder: String, manifest: String, extraFiles: [String: String] = [:]) throws {
         let app = root.appendingPathComponent(folder, isDirectory: true)
         try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
@@ -701,6 +843,29 @@ final class DropInAppStoreTests: XCTestCase {
             let message = String(data: data, encoding: .utf8) ?? "ditto failed"
             throw NSError(domain: "DropInAppStoreTests", code: Int(process.terminationStatus), userInfo: [NSLocalizedDescriptionKey: message])
         }
+    }
+}
+
+private final class ProxyFetchRecorder {
+    private let lock = NSLock()
+    private var recordedURLs: [URL] = []
+    private let response: DropInAppProxyResponse
+
+    init(response: DropInAppProxyResponse) {
+        self.response = response
+    }
+
+    var urls: [URL] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedURLs
+    }
+
+    func fetch(_ url: URL) -> Result<DropInAppProxyResponse, Error> {
+        lock.lock()
+        recordedURLs.append(url)
+        lock.unlock()
+        return .success(response)
     }
 }
 

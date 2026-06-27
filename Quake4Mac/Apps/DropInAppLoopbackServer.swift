@@ -2,20 +2,37 @@ import AppKit
 import Foundation
 import Network
 
+struct DropInAppProxyResponse {
+    let status: Int
+    let contentType: String
+    let body: Data
+}
+
+enum DropInAppProxyFetchError: Error {
+    case timeout
+    case nonHTTPResponse
+    case responseTooLarge
+}
+
 final class DropInAppLoopbackServer: ObservableObject {
     static let shared = DropInAppLoopbackServer()
+    static let maxProxyResponseSize = 5 * 1024 * 1024
 
     @Published private(set) var port: UInt16?
     @Published private(set) var lastError = ""
 
     private let store: DropInAppStore
     private let openURL: (URL) -> Bool
+    private let fetchProxyURL: (URL) -> Result<DropInAppProxyResponse, Error>
     private let queue = DispatchQueue(label: "quakeos.dropin.loopback")
     private var listener: NWListener?
 
-    init(store: DropInAppStore = .shared, openURL: @escaping (URL) -> Bool = DropInAppLoopbackServer.openExternally) {
+    init(store: DropInAppStore = .shared,
+         openURL: @escaping (URL) -> Bool = DropInAppLoopbackServer.openExternally,
+         fetchProxyURL: @escaping (URL) -> Result<DropInAppProxyResponse, Error> = DropInAppLoopbackServer.fetchProxyURL) {
         self.store = store
         self.openURL = openURL
+        self.fetchProxyURL = fetchProxyURL
     }
 
     func start() {
@@ -92,6 +109,11 @@ final class DropInAppLoopbackServer: ObservableObject {
             return appOpenResponse(appID: openRequest.appID, url: openRequest.url, request: request)
         }
 
+        if let proxyTarget = Self.appProxyTarget(target) {
+            guard method == "GET" else { return Self.response(status: 405) }
+            return appProxyResponse(target: proxyTarget, request: request)
+        }
+
         guard method == "GET" else { return Self.response(status: 405) }
         if let appID = Self.appConfigAppID(target) {
             return appConfigResponse(appID: appID, request: request)
@@ -108,6 +130,23 @@ final class DropInAppLoopbackServer: ObservableObject {
             return Self.response(status: 200, body: body, contentType: Self.mimeType(for: fileURL))
         } catch {
             return Self.response(status: (error as NSError).code == NSFileReadNoSuchFileError ? 404 : 500)
+        }
+    }
+
+    private func appProxyResponse(target: URL, request: String) -> Data {
+        guard Self.isSameOrigin(request: request, port: port),
+              let appID = Self.requestingAppID(request: request, port: port) else { return Self.response(status: 403) }
+        guard let app = store.app(id: appID), app.manifest.served else { return Self.response(status: 404) }
+        guard proxyAllows(app: app, target: target) else { return Self.response(status: 403) }
+
+        switch fetchProxyURL(target) {
+        case .success(let upstream):
+            guard upstream.body.count <= Self.maxProxyResponseSize else { return Self.response(status: 502) }
+            return Self.response(status: upstream.status,
+                                 body: upstream.body,
+                                 contentType: upstream.contentType)
+        case .failure:
+            return Self.response(status: 502)
         }
     }
 
@@ -129,12 +168,43 @@ final class DropInAppLoopbackServer: ObservableObject {
         }
     }
 
+    private func proxyAllows(app: DropInAppRecord, target: URL) -> Bool {
+        guard let proxy = app.manifest.proxy,
+              Self.proxyAllowsGET(proxy),
+              !proxy.allow.isEmpty else { return false }
+
+        return proxy.allow.contains { rule in
+            if let optionKey = rule.option,
+               let option = app.manifest.options.first(where: { $0.key == optionKey }) {
+                return Self.proxyOptionRuleAllows(baseValue: store.optionValue(appID: app.id, option: option),
+                                                  target: target)
+            }
+
+            if let pattern = rule.pattern {
+                return Self.proxyPatternRuleAllows(pattern: pattern, target: target)
+            }
+
+            return false
+        }
+    }
+
     static func appConfigAppID(_ target: String) -> String? {
         guard let components = URLComponents(string: "http://127.0.0.1\(target)"),
               components.path == "/app-config",
               let appID = components.queryItems?.first(where: { $0.name == "app" })?.value,
               DropInAppStore.isValidAppID(appID) else { return nil }
         return appID
+    }
+
+    static func appProxyTarget(_ target: String) -> URL? {
+        guard let components = URLComponents(string: "http://127.0.0.1\(target)"),
+              components.path == "/app-proxy",
+              let target = components.queryItems?.first(where: { $0.name == "url" })?.value,
+              let url = URL(string: target),
+              let scheme = url.scheme?.lowercased(),
+              (scheme == "http" || scheme == "https"),
+              url.host != nil else { return nil }
+        return url
     }
 
     static func appOpenRequest(_ target: String) -> (appID: String, url: URL)? {
@@ -166,6 +236,16 @@ final class DropInAppLoopbackServer: ObservableObject {
         return (appID, relativePath)
     }
 
+    static func requestingAppID(request: String, port: UInt16?) -> String? {
+        guard let port,
+              let referer = headerValue("Referer", in: request.components(separatedBy: "\r\n")),
+              isLoopbackURL(referer, port: port),
+              let url = URL(string: referer),
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+              let appRequest = servedAppRequest(path) else { return nil }
+        return appRequest.appID
+    }
+
     static func hostIsLoopback(request: String, port: UInt16?) -> Bool {
         guard let port else { return false }
         let expected = ["127.0.0.1:\(port)", "localhost:\(port)"]
@@ -190,6 +270,26 @@ final class DropInAppLoopbackServer: ObservableObject {
             return isLoopbackURL(referer, port: port)
         }
         return false
+    }
+
+    static func proxyOptionRuleAllows(baseValue: String, target: URL) -> Bool {
+        guard !baseValue.isEmpty,
+              let base = URL(string: normalizedBaseURLString(baseValue)),
+              sameOrigin(base, target),
+              pathIsUnderBase(base: base, target: target) else { return false }
+        return true
+    }
+
+    static func proxyPatternRuleAllows(pattern: String, target: URL) -> Bool {
+        guard let host = target.host, !privateHost(host) else { return false }
+        do {
+            let regex = try NSRegularExpression(pattern: pattern)
+            let range = NSRange(target.absoluteString.startIndex..<target.absoluteString.endIndex,
+                                in: target.absoluteString)
+            return regex.firstMatch(in: target.absoluteString, range: range) != nil
+        } catch {
+            return false
+        }
     }
 
     static func mimeType(for url: URL) -> String {
@@ -223,6 +323,43 @@ final class DropInAppLoopbackServer: ObservableObject {
         return didOpen
     }
 
+    private static func fetchProxyURL(_ url: URL) -> Result<DropInAppProxyResponse, Error> {
+        var request = URLRequest(url: url, timeoutInterval: 12)
+        request.setValue("QuakeOS/DropInAppProxy", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/rss+xml, application/xml, text/xml, text/html, */*",
+                         forHTTPHeaderField: "Accept")
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var result: Result<DropInAppProxyResponse, Error>?
+        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+            defer { semaphore.signal() }
+            if let error {
+                result = .failure(error)
+                return
+            }
+            guard let response = response as? HTTPURLResponse else {
+                result = .failure(DropInAppProxyFetchError.nonHTTPResponse)
+                return
+            }
+            let body = data ?? Data()
+            guard body.count <= maxProxyResponseSize else {
+                result = .failure(DropInAppProxyFetchError.responseTooLarge)
+                return
+            }
+            result = .success(DropInAppProxyResponse(status: response.statusCode,
+                                                     contentType: response.value(forHTTPHeaderField: "Content-Type")
+                                                        ?? "application/octet-stream",
+                                                     body: body))
+        }
+        task.resume()
+
+        guard semaphore.wait(timeout: .now() + 13) == .success else {
+            task.cancel()
+            return .failure(DropInAppProxyFetchError.timeout)
+        }
+        return result ?? .failure(DropInAppProxyFetchError.timeout)
+    }
+
     private static func headerValue(_ name: String, in lines: [String]) -> String? {
         let prefix = "\(name.lowercased()):"
         return lines.first { $0.lowercased().hasPrefix(prefix) }?
@@ -239,6 +376,51 @@ final class DropInAppLoopbackServer: ObservableObject {
         return true
     }
 
+    private static func sameOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+            && lhs.host?.lowercased() == rhs.host?.lowercased()
+            && normalizedPort(lhs) == normalizedPort(rhs)
+    }
+
+    private static func proxyAllowsGET(_ proxy: DropInAppProxyConfig) -> Bool {
+        guard let methods = proxy.methods else { return true }
+        return methods.contains { $0.uppercased() == "GET" }
+    }
+
+    private static func normalizedBaseURLString(_ value: String) -> String {
+        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        while normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        return normalized + "/"
+    }
+
+    private static func normalizedPort(_ url: URL) -> Int {
+        if let port = url.port { return port }
+        return url.scheme?.lowercased() == "https" ? 443 : 80
+    }
+
+    private static func pathIsUnderBase(base: URL, target: URL) -> Bool {
+        let basePath = base.path == "/" || base.path.hasSuffix("/") ? base.path : base.path + "/"
+        guard basePath != "/" else { return true }
+        let baseWithoutSlash = String(basePath.dropLast())
+        return target.path == baseWithoutSlash || target.path.hasPrefix(basePath)
+    }
+
+    private static func privateHost(_ host: String) -> Bool {
+        let lower = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]")).lowercased()
+        if lower == "localhost" || lower == "::1" || lower.hasSuffix(".local") { return true }
+        if lower.hasPrefix("fc") || lower.hasPrefix("fd") || lower.hasPrefix("fe80") { return true }
+        let parts = lower.split(separator: ".").compactMap { Int($0) }
+        guard parts.count == 4 else { return false }
+        if parts[0] == 10 || parts[0] == 127 || parts[0] == 0 || parts[0] == 169 && parts[1] == 254 {
+            return true
+        }
+        if parts[0] == 192 && parts[1] == 168 { return true }
+        if parts[0] == 172 && (16...31).contains(parts[1]) { return true }
+        return false
+    }
+
     private static func response(status: Int, body: Data = Data(), contentType: String = "text/plain; charset=utf-8") -> Data {
         let reason: String
         switch status {
@@ -248,7 +430,9 @@ final class DropInAppLoopbackServer: ObservableObject {
         case 403: reason = "Forbidden"
         case 404: reason = "Not Found"
         case 405: reason = "Method Not Allowed"
-        default: reason = "Internal Server Error"
+        case 500: reason = "Internal Server Error"
+        case 502: reason = "Bad Gateway"
+        default: reason = HTTPURLResponse.localizedString(forStatusCode: status).capitalized
         }
 
         let headers = """
