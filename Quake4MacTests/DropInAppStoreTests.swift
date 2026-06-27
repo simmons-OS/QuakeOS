@@ -107,9 +107,11 @@ final class DropInAppStoreTests: XCTestCase {
         store.setOptionValue(appID: app.id, optionKey: "seconds", value: "true")
 
         let payload = store.clientConfigPayload(for: app)
+        let api = try XCTUnwrap(payload["api"] as? [String: String])
         let options = try XCTUnwrap(payload["options"] as? [String: Any])
 
         XCTAssertEqual(payload["app"] as? String, "clock")
+        XCTAssertEqual(api["open"], "/app-api/open?app=clock")
         XCTAssertEqual(options["theme"] as? String, "dark")
         XCTAssertEqual(options["seconds"] as? Bool, true)
         XCTAssertNil(options["token"])
@@ -218,8 +220,10 @@ final class DropInAppStoreTests: XCTestCase {
             XCTAssertNil(error)
             XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
             let json = try? JSONSerialization.jsonObject(with: data ?? Data()) as? [String: Any]
+            let api = json?["api"] as? [String: String]
             let options = json?["options"] as? [String: Any]
             XCTAssertEqual(json?["app"] as? String, "clock")
+            XCTAssertEqual(api?["open"], "/app-api/open?app=clock")
             XCTAssertEqual(options?["theme"] as? String, "dark")
             XCTAssertEqual(options?["seconds"] as? Bool, true)
             XCTAssertNil(options?["token"])

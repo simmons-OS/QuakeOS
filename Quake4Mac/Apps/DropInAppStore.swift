@@ -195,6 +195,7 @@ final class DropInAppStore: ObservableObject {
     func clientConfigPayload(for app: DropInAppRecord) -> [String: Any] {
         [
             "app": app.id,
+            "api": Self.clientAPIPaths(for: app),
             "options": Self.resolvedClientOptionValues(for: app.manifest.options,
                                                        values: optionValuesByAppID[app.id] ?? [:])
         ]
@@ -384,6 +385,10 @@ final class DropInAppStore: ObservableObject {
 
     static func clientOptions(_ options: [DropInAppOption]) -> [DropInAppOption] {
         options.filter(isClientOption)
+    }
+
+    static func clientAPIPaths(for app: DropInAppRecord) -> [String: String] {
+        ["open": "/app-api/open?app=\(app.id)"]
     }
 
     static func staticOptionsFragment(for options: [DropInAppOption],
